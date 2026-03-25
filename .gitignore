@@ -1,0 +1,26 @@
+# Go
+server/server
+tui/tui
+cli/cli
+*.exe
+*.test
+*.out
+
+# Node / Web
+web/node_modules/
+web/dist/
+
+# Xcode / iOS
+ios/Messenger.xcodeproj/project.xcworkspace/xcuserdata/
+ios/Messenger.xcodeproj/xcuserdata/
+ios/DerivedData/
+ios/*.xcarchive
+ios/build/
+
+# macOS
+.DS_Store
+**/.DS_Store
+
+# Environment / secrets
+.env
+*.env
