@@ -167,11 +167,9 @@ func (s *Server) HandleSendMessage(w http.ResponseWriter, r *http.Request) {
 	s.hub.Deliver(req.RecipientKey, msg)
 	s.hub.DeliverToSender(senderKey, msg)
 
-	// Push notification to recipient if they have no active WebSocket.
-	if !s.hub.IsConnected(req.RecipientKey) {
-		if tokens, err := s.store.GetDeviceTokens(r.Context(), req.RecipientKey); err == nil {
-			s.pusher.SendToTokens(tokens)
-		}
+	// Push notification to recipient (always — WebSocket may be alive but app in background).
+	if tokens, err := s.store.GetDeviceTokens(r.Context(), req.RecipientKey); err == nil {
+		s.pusher.SendToTokens(tokens)
 	}
 
 	writeJSON(w, http.StatusCreated, sendMessageResponse{
