@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -62,6 +63,21 @@ func main() {
 
 	// WebSocket endpoint (auth via query param).
 	r.Get("/v1/ws", srv.ServeWS)
+
+	// Serve web app static files if the dist directory exists.
+	if _, err := os.Stat("web/dist"); err == nil {
+		fs := http.FileServer(http.Dir("web/dist"))
+		r.Get("/*", func(w http.ResponseWriter, r *http.Request) {
+			// Serve index.html for any path that doesn't match a real file
+			// (SPA client-side routing).
+			if _, err := os.Stat("web/dist" + r.URL.Path); os.IsNotExist(err) {
+				http.ServeFile(w, r, "web/dist/index.html")
+				return
+			}
+			fs.ServeHTTP(w, r)
+		})
+		log.Println("serving web app from web/dist")
+	}
 
 	addr := fmt.Sprintf(":%s", cfg.Port)
 	log.Printf("listening on %s", addr)
