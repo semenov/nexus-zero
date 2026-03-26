@@ -27,7 +27,7 @@ final class AppState: ObservableObject {
 
     // MARK: - Configuration
 
-    private let serverBaseURL = "http://localhost:8888"
+    private let serverBaseURL = "https://nexus.semenov.ai"
 
     // MARK: - Derived state
 

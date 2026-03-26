@@ -40,7 +40,7 @@ export function clearKeys(): void { del('keys') }
 
 // ── Server URL ────────────────────────────────────────────────────────────────
 
-export function getServerUrl(): string { return get<string>('server_url') ?? 'http://localhost:8888' }
+export function getServerUrl(): string { return get<string>('server_url') ?? 'https://nexus.semenov.ai' }
 export function setServerUrl(url: string): void { set('server_url', url) }
 
 // ── Contacts ──────────────────────────────────────────────────────────────────
