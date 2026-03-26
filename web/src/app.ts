@@ -333,6 +333,13 @@ async function syncContacts(): Promise<void> {
         } catch { /* skip unknown user */ }
       }
     }
+    // Patch any contacts with missing encryption keys (auto-created from incoming messages)
+    for (const c of S.contacts.filter(c => !c.encryptionKey)) {
+      try {
+        const user = await api.getUser(c.identityKey)
+        if (user) c.encryptionKey = user.encryption_key
+      } catch { /* skip */ }
+    }
     storage.saveContacts(S.contacts)
     renderContacts()
   } catch (e) {
