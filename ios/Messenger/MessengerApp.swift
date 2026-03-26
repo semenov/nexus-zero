@@ -50,7 +50,13 @@ final class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
         willPresent notification: UNNotification,
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
-        completionHandler([.banner, .sound])
+        // Suppress APNs push banners when app is in foreground — WebSocket delivers the message.
+        // Local notifications (scheduled by the app itself) are always shown.
+        if notification.request.trigger is UNPushNotificationTrigger {
+            completionHandler([])
+        } else {
+            completionHandler([.banner, .sound])
+        }
     }
 
     func userNotificationCenter(

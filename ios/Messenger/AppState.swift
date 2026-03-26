@@ -63,18 +63,6 @@ final class AppState: ObservableObject {
         // Connect WebSocket for real-time delivery.
         connectWebSocket()
 
-        // Disconnect WebSocket when backgrounded (so server sends APNs push),
-        // reconnect and fetch pending when foregrounded.
-        NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification,
-                                               object: nil, queue: .main) { [weak self] _ in
-            self?.wsClient.disconnect()
-        }
-        NotificationCenter.default.addObserver(forName: UIApplication.willEnterForegroundNotification,
-                                               object: nil, queue: .main) { [weak self] _ in
-            self?.connectWebSocket()
-            Task { [weak self] in await self?.fetchPendingMessages() }
-        }
-
         // Sync contacts from server, then load full history, then pending.
         Task {
             await syncContactsFromServer()
