@@ -288,6 +288,14 @@ final class AppState: ObservableObject {
                 text = t
             }
 
+            // Auto-create a contact entry if this sender is unknown.
+            if !isOutgoing && !contacts.contains(where: { $0.identityKey == contactKey }) {
+                let nick = String(contactKey.prefix(8)) + "…"
+                let unknown = Contact(identityKey: contactKey, encryptionKey: "", nickname: nick)
+                contacts.append(unknown)
+                localStore.saveContacts(contacts)
+            }
+
             let stored = StoredMessage(
                 id: response.id,
                 senderKey: response.senderKey,
