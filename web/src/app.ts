@@ -454,6 +454,11 @@ function handleIncoming(frame: ServerMessage): void {
     storage.saveContacts(S.contacts)
     S.conversations[senderKey] ??= []
     api.upsertContact(S.signingPriv, senderKey, nick).catch(() => {})
+    // Fetch encryption key so replies can be encrypted
+    api.getUser(senderKey).then(user => {
+      const c = S.contacts.find(c => c.identityKey === senderKey)
+      if (c) { c.encryptionKey = user.encryption_key; storage.saveContacts(S.contacts) }
+    }).catch(() => {})
   }
 
   addToConversation(senderKey, {
