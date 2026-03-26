@@ -216,10 +216,11 @@ function renderMessages(scrollToBottom = false): void {
   const msgs = S.conversations[S.activeChatKey] ?? []
   const hasMore = S.hasMoreHistory[S.activeChatKey] !== false
 
-  const list = $('message-list')
-  const prevScrollHeight = list.scrollHeight
-  const prevScrollTop = list.scrollTop
-  const wasAtBottom = prevScrollHeight - prevScrollTop - list.clientHeight < 40
+  const listOuter = $('message-list')
+  const list = $('message-list-inner')
+  const prevScrollHeight = listOuter.scrollHeight
+  const prevScrollTop = listOuter.scrollTop
+  const wasAtBottom = prevScrollHeight - prevScrollTop - listOuter.clientHeight < 40
 
   list.innerHTML = `
     ${hasMore ? `<div class="load-earlier"><button id="btn-load-earlier">load earlier messages</button></div>` : ''}
@@ -235,11 +236,11 @@ function renderMessages(scrollToBottom = false): void {
   document.getElementById('btn-load-earlier')?.addEventListener('click', loadOlderMessages)
 
   if (scrollToBottom) {
-    list.scrollTop = list.scrollHeight
+    listOuter.scrollTop = listOuter.scrollHeight
   } else if (wasAtBottom) {
-    list.scrollTop = list.scrollHeight
+    listOuter.scrollTop = listOuter.scrollHeight
   } else {
-    list.scrollTop = prevScrollTop + (list.scrollHeight - prevScrollHeight)
+    listOuter.scrollTop = prevScrollTop + (listOuter.scrollHeight - prevScrollHeight)
   }
 }
 

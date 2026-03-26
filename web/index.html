@@ -161,6 +161,7 @@
     #chat-header-key { font-size: 9px; color: var(--text-dim); margin-top: 2px; }
 
     #message-list { flex: 1; overflow-y: auto; padding: 12px 14px; display: flex; flex-direction: column; gap: 5px; }
+    #message-list-inner { display: flex; flex-direction: column; gap: 5px; max-width: 720px; width: 100%; margin: 0 auto; }
 
     .load-earlier { text-align: center; padding: 4px 0 8px; }
     .load-earlier button {
@@ -310,7 +311,7 @@
             <div id="chat-header-key"></div>
           </div>
         </div>
-        <div id="message-list"></div>
+        <div id="message-list"><div id="message-list-inner"></div></div>
         <div id="input-bar">
           <div id="chat-error" class="hidden"></div>
           <div id="input-row">
