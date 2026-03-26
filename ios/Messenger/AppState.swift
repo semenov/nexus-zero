@@ -71,6 +71,16 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Fetches the encryption key for an auto-created contact and updates the local record.
+    private func fetchEncryptionKey(for identityKey: String) async {
+        guard let user = try? await apiClient.getUser(identityKey: identityKey) else { return }
+        guard let idx = contacts.firstIndex(where: { $0.identityKey == identityKey }) else { return }
+        contacts[idx] = Contact(identityKey: identityKey,
+                                encryptionKey: user.encryptionKey,
+                                nickname: contacts[idx].nickname)
+        localStore.saveContacts(contacts)
+    }
+
     // MARK: - Push notifications
 
     /// Called by the app delegate when APNs returns a device token.
@@ -216,6 +226,7 @@ final class AppState: ObservableObject {
             let unknown = Contact(identityKey: senderKey, encryptionKey: "", nickname: nick)
             addContact(unknown)
             senderName = nick
+            Task { await fetchEncryptionKey(for: senderKey) }
         }
 
         let stored = StoredMessage(
@@ -294,6 +305,7 @@ final class AppState: ObservableObject {
                 let unknown = Contact(identityKey: contactKey, encryptionKey: "", nickname: nick)
                 contacts.append(unknown)
                 localStore.saveContacts(contacts)
+                Task { await fetchEncryptionKey(for: contactKey) }
             }
 
             let stored = StoredMessage(
