@@ -10,7 +10,6 @@
 		C10000000000000000000001 /* MessengerApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000001 /* MessengerApp.swift */; };
 		C10000000000000000000002 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000002 /* AppState.swift */; };
 		C10000000000000000000003 /* Extensions.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000003 /* Extensions.swift */; };
-		C10000000000000000000020 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000020 /* Theme.swift */; };
 		C10000000000000000000004 /* Contact.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000004 /* Contact.swift */; };
 		C10000000000000000000005 /* StoredMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000005 /* StoredMessage.swift */; };
 		C10000000000000000000006 /* KeyManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000006 /* KeyManager.swift */; };
@@ -25,6 +24,7 @@
 		C1000000000000000000000F /* AddContactView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000F /* AddContactView.swift */; };
 		C10000000000000000000010 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000010 /* SettingsView.swift */; };
 		C10000000000000000000011 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000011 /* Assets.xcassets */; };
+		C10000000000000000000020 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000020 /* Theme.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -32,7 +32,6 @@
 		B10000000000000000000001 /* MessengerApp.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = MessengerApp.swift; sourceTree = "<group>"; };
 		B10000000000000000000002 /* AppState.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
 		B10000000000000000000003 /* Extensions.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = Extensions.swift; sourceTree = "<group>"; };
-		B10000000000000000000020 /* Theme.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
 		B10000000000000000000004 /* Contact.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = Contact.swift; sourceTree = "<group>"; };
 		B10000000000000000000005 /* StoredMessage.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = StoredMessage.swift; sourceTree = "<group>"; };
 		B10000000000000000000006 /* KeyManager.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = KeyManager.swift; sourceTree = "<group>"; };
@@ -47,6 +46,7 @@
 		B1000000000000000000000F /* AddContactView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = AddContactView.swift; sourceTree = "<group>"; };
 		B10000000000000000000010 /* SettingsView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		B10000000000000000000011 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		B10000000000000000000020 /* Theme.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -60,7 +60,7 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
-		A10000000000000000000003 /* Main */ = {
+		A10000000000000000000003 = {
 			isa = PBXGroup;
 			children = (
 				A10000000000000000000005 /* Messenger */,
@@ -351,8 +351,10 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Messenger/Messenger.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 5453DCJL87;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Required to scan contact QR codes.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -364,8 +366,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.semenov-ai.nexus-zero;
-				CODE_SIGN_ENTITLEMENTS = Messenger/Messenger.entitlements;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.semenov-ai.nexus-zero";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
@@ -378,8 +379,10 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Messenger/Messenger.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 5453DCJL87;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Required to scan contact QR codes.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -391,8 +394,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.semenov-ai.nexus-zero;
-				CODE_SIGN_ENTITLEMENTS = Messenger/Messenger.entitlements;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.semenov-ai.nexus-zero";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
@@ -422,7 +424,6 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
-
 	};
 	rootObject = A10000000000000000000001 /* Project object */;
 }
