@@ -1,9 +1,11 @@
 import SwiftUI
+import UIKit
 import UserNotifications
 
 @main
 struct MessengerApp: App {
 
+    @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var appState = AppState()
 
     init() {
@@ -14,8 +16,26 @@ struct MessengerApp: App {
         WindowGroup {
             RootView()
                 .environmentObject(appState)
-                .onAppear { NotificationDelegate.shared.appState = appState }
+                .onAppear {
+                    NotificationDelegate.shared.appState = appState
+                    appDelegate.appState = appState
+                }
         }
+    }
+}
+
+/// App delegate that handles APNs device token registration.
+final class AppDelegate: NSObject, UIApplicationDelegate {
+    weak var appState: AppState?
+
+    func application(_ application: UIApplication,
+                     didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
+        appState?.registerDeviceToken(deviceToken)
+    }
+
+    func application(_ application: UIApplication,
+                     didFailToRegisterForRemoteNotificationsWithError error: Error) {
+        print("APNs registration failed: \(error)")
     }
 }
 

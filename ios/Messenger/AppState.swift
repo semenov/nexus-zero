@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import UIKit
 import UserNotifications
 
 /// Central application state, owns all subsystems and drives cross-cutting
@@ -48,10 +49,15 @@ final class AppState: ObservableObject {
             conversations[contact.identityKey] = localStore.loadMessages(forKey: contact.identityKey)
         }
 
-        // Request notification permission (no-op if already granted/denied).
+        // Request notification permission, then register for remote notifications.
         Task {
-            try? await UNUserNotificationCenter.current()
-                .requestAuthorization(options: [.alert, .sound, .badge])
+            let granted = (try? await UNUserNotificationCenter.current()
+                .requestAuthorization(options: [.alert, .sound, .badge])) ?? false
+            if granted {
+                await MainActor.run {
+                    UIApplication.shared.registerForRemoteNotifications()
+                }
+            }
         }
 
         // Connect WebSocket for real-time delivery.
@@ -62,6 +68,16 @@ final class AppState: ObservableObject {
             await syncContactsFromServer()
             await fetchHistory()
             await fetchPendingMessages()
+        }
+    }
+
+    // MARK: - Push notifications
+
+    /// Called by the app delegate when APNs returns a device token.
+    func registerDeviceToken(_ tokenData: Data) {
+        let token = tokenData.map { String(format: "%02x", $0) }.joined()
+        Task {
+            try? await apiClient.registerDeviceToken(token)
         }
     }
 

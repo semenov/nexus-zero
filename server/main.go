@@ -32,7 +32,8 @@ func main() {
 
 	store := NewStore(pool)
 	hub := NewHub()
-	srv := NewServer(store, hub)
+	pusher := NewPusher()
+	srv := NewServer(store, hub, pusher)
 
 	r := chi.NewRouter()
 
@@ -56,6 +57,7 @@ func main() {
 		r.Get("/v1/contacts", srv.HandleGetContacts)
 		r.Put("/v1/contacts/{contact_key}", srv.HandleUpsertContact)
 		r.Delete("/v1/contacts/{contact_key}", srv.HandleDeleteContact)
+		r.Put("/v1/device-token", srv.HandleUpsertDeviceToken)
 	})
 
 	// WebSocket endpoint (auth via query param).

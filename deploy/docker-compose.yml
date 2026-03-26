@@ -23,6 +23,12 @@ services:
     environment:
       DATABASE_URL: postgres://nexus:${DB_PASSWORD}@postgres/nexus?sslmode=disable
       PORT: 8888
+      APNS_KEY_PATH: ${APNS_KEY_PATH}
+      APNS_KEY_ID: ${APNS_KEY_ID}
+      APNS_TEAM_ID: ${APNS_TEAM_ID}
+      APNS_BUNDLE_ID: ${APNS_BUNDLE_ID}
+    volumes:
+      - ./apns.p8:${APNS_KEY_PATH}:ro
     ports:
       - "127.0.0.1:8888:8888"
     depends_on:

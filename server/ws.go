@@ -50,6 +50,13 @@ func (h *Hub) unregister(identityKey string, c *wsClient) {
 	}
 }
 
+// IsConnected returns true if the identity key has at least one active WebSocket.
+func (h *Hub) IsConnected(identityKey string) bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return len(h.clients[identityKey]) > 0
+}
+
 // Deliver pushes a message to all connected clients for the given identity key.
 // Each send is non-blocking; a full buffer drops the message for that client
 // (it can recover via GET /v1/messages/pending).

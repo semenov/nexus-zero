@@ -230,6 +230,47 @@ func (s *Store) DeleteContact(ctx context.Context, ownerKey, contactKey string) 
 	return err
 }
 
+// UpsertDeviceToken stores a device token for the given identity key.
+func (s *Store) UpsertDeviceToken(ctx context.Context, identityKey, token string) error {
+	_, err := s.pool.Exec(ctx,
+		`INSERT INTO device_tokens (identity_key, token, updated_at)
+		 VALUES ($1, $2, NOW())
+		 ON CONFLICT (identity_key, token) DO UPDATE SET updated_at = NOW()`,
+		identityKey, token,
+	)
+	return err
+}
+
+// GetDeviceTokens returns all device tokens for the given identity key.
+func (s *Store) GetDeviceTokens(ctx context.Context, identityKey string) ([]string, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT token FROM device_tokens WHERE identity_key = $1`,
+		identityKey,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var tokens []string
+	for rows.Next() {
+		var t string
+		if err := rows.Scan(&t); err != nil {
+			return nil, err
+		}
+		tokens = append(tokens, t)
+	}
+	return tokens, rows.Err()
+}
+
+// DeleteDeviceToken removes a specific device token.
+func (s *Store) DeleteDeviceToken(ctx context.Context, identityKey, token string) error {
+	_, err := s.pool.Exec(ctx,
+		`DELETE FROM device_tokens WHERE identity_key = $1 AND token = $2`,
+		identityKey, token,
+	)
+	return err
+}
+
 // isUniqueViolation returns true when the error is a PostgreSQL unique-
 // constraint violation (SQLSTATE 23505).
 func isUniqueViolation(err error) bool {

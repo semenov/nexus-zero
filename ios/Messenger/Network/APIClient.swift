@@ -190,6 +190,14 @@ final class APIClient {
         try assertSuccess(response, data: data, expected: 204)
     }
 
+    /// Registers an APNs device token with the server.
+    func registerDeviceToken(_ token: String) async throws {
+        var req = try makeRequest(path: "/v1/device-token", method: "PUT", authenticated: true)
+        req.httpBody = try JSONSerialization.data(withJSONObject: ["token": token])
+        let (data, response) = try await perform(req)
+        try assertSuccess(response, data: data, expected: 204)
+    }
+
     /// Retrieves (and marks as delivered) all pending messages for the
     /// authenticated user.
     func getPendingMessages() async throws -> [MessageResponse] {

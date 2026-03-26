@@ -12,13 +12,14 @@ import (
 
 // Server holds shared dependencies used by HTTP handlers.
 type Server struct {
-	store *Store
-	hub   *Hub
+	store  *Store
+	hub    *Hub
+	pusher *Pusher
 }
 
-// NewServer creates a Server with the given store and hub.
-func NewServer(store *Store, hub *Hub) *Server {
-	return &Server{store: store, hub: hub}
+// NewServer creates a Server with the given store, hub, and pusher.
+func NewServer(store *Store, hub *Hub, pusher *Pusher) *Server {
+	return &Server{store: store, hub: hub, pusher: pusher}
 }
 
 // -------------------------------------------------------------------
@@ -166,6 +167,13 @@ func (s *Server) HandleSendMessage(w http.ResponseWriter, r *http.Request) {
 	s.hub.Deliver(req.RecipientKey, msg)
 	s.hub.DeliverToSender(senderKey, msg)
 
+	// Push notification to recipient if they have no active WebSocket.
+	if !s.hub.IsConnected(req.RecipientKey) {
+		if tokens, err := s.store.GetDeviceTokens(r.Context(), req.RecipientKey); err == nil {
+			s.pusher.SendToTokens(tokens)
+		}
+	}
+
 	writeJSON(w, http.StatusCreated, sendMessageResponse{
 		ID:        msg.ID,
 		CreatedAt: msg.CreatedAt,
@@ -281,6 +289,34 @@ func (s *Server) HandleDeleteContact(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.store.DeleteContact(r.Context(), ownerKey, contactKey); err != nil {
 		log.Printf("HandleDeleteContact error: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// -------------------------------------------------------------------
+// GET /v1/messages/pending
+// -------------------------------------------------------------------
+
+// -------------------------------------------------------------------
+// PUT /v1/device-token
+// -------------------------------------------------------------------
+
+type deviceTokenRequest struct {
+	Token string `json:"token"`
+}
+
+// HandleUpsertDeviceToken registers or refreshes an APNs device token.
+func (s *Server) HandleUpsertDeviceToken(w http.ResponseWriter, r *http.Request) {
+	identityKey := identityFromCtx(r.Context())
+	var req deviceTokenRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Token == "" {
+		writeError(w, http.StatusBadRequest, "token is required")
+		return
+	}
+	if err := s.store.UpsertDeviceToken(r.Context(), identityKey, req.Token); err != nil {
+		log.Printf("HandleUpsertDeviceToken error: %v", err)
 		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}

@@ -40,3 +40,10 @@ CREATE TABLE IF NOT EXISTS contacts (
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (owner_key, contact_key)
 );
+
+CREATE TABLE IF NOT EXISTS device_tokens (
+    identity_key TEXT NOT NULL REFERENCES users(identity_key) ON DELETE CASCADE,
+    token        TEXT NOT NULL,
+    updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (identity_key, token)
+);
