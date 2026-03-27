@@ -86,11 +86,18 @@ func main() {
 	}
 }
 
-// corsMiddleware adds permissive CORS headers to every response. This allows
-// a future web client served from any origin to interact with the API.
+// corsMiddleware adds CORS headers for the web client origin.
 func corsMiddleware(next http.Handler) http.Handler {
+	allowed := map[string]bool{
+		"https://nexus.semenov.ai": true,
+		"http://localhost:5173":    true, // dev
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
+		origin := r.Header.Get("Origin")
+		if allowed[origin] {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Vary", "Origin")
+		}
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 

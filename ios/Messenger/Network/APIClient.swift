@@ -11,6 +11,7 @@ struct UserResponse: Codable {
 struct ContactResponse: Codable {
     let contactKey: String
     let nickname: String
+    let encryptionKey: String?
     let updatedAt: Date
 }
 
@@ -104,7 +105,10 @@ final class APIClient {
         var req = try makeRequest(path: "/v1/users", method: "POST", authenticated: false)
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
         let (_, response) = try await perform(req)
-        let code = (response as! HTTPURLResponse).statusCode
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw APIError.networkError(URLError(.badServerResponse))
+        }
+        let code = httpResponse.statusCode
         // 201 = created, 409 = already registered (idempotent — treat as success)
         guard code == 201 || code == 409 else {
             throw APIError.httpError(code, "registration failed")
@@ -229,7 +233,10 @@ final class APIClient {
     }
 
     private func assertSuccess(_ response: URLResponse, data: Data, expected: Int = 200) throws {
-        let code = (response as! HTTPURLResponse).statusCode
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw APIError.networkError(URLError(.badServerResponse))
+        }
+        let code = httpResponse.statusCode
         if code == expected { return }
         // Attempt to extract the server's error message.
         if let errBody = try? JSONSerialization.jsonObject(with: data) as? [String: Any],

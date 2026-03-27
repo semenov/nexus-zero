@@ -12,6 +12,7 @@ export interface ServerUser {
 export interface ServerContact {
   contact_key: string
   nickname: string
+  encryption_key?: string
   updated_at: string
 }
 

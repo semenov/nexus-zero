@@ -320,25 +320,15 @@ async function syncContacts(): Promise<void> {
   try {
     const serverContacts = await api.getContacts(S.signingPriv)
     for (const sc of serverContacts) {
+      const encKey = sc.encryption_key ?? ''
       const existing = S.contacts.find(c => c.identityKey === sc.contact_key)
       if (existing) {
         if (existing.nickname !== sc.nickname) existing.nickname = sc.nickname
+        if (!existing.encryptionKey && encKey) existing.encryptionKey = encKey
       } else {
-        try {
-          const user = await api.getUser(sc.contact_key)
-          if (user) {
-            S.contacts.push({ identityKey: sc.contact_key, encryptionKey: user.encryption_key, nickname: sc.nickname })
-            S.conversations[sc.contact_key] ??= storage.loadMessages(sc.contact_key)
-          }
-        } catch { /* skip unknown user */ }
+        S.contacts.push({ identityKey: sc.contact_key, encryptionKey: encKey, nickname: sc.nickname })
+        S.conversations[sc.contact_key] ??= storage.loadMessages(sc.contact_key)
       }
-    }
-    // Patch any contacts with missing encryption keys (auto-created from incoming messages)
-    for (const c of S.contacts.filter(c => !c.encryptionKey)) {
-      try {
-        const user = await api.getUser(c.identityKey)
-        if (user) c.encryptionKey = user.encryption_key
-      } catch { /* skip */ }
     }
     storage.saveContacts(S.contacts)
     renderContacts()

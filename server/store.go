@@ -182,16 +182,20 @@ func (s *Store) MarkDelivered(ctx context.Context, ids []string) error {
 
 // Contact represents a contact stored server-side for a user.
 type Contact struct {
-	ContactKey string    `json:"contact_key"`
-	Nickname   string    `json:"nickname"`
-	UpdatedAt  time.Time `json:"updated_at"`
+	ContactKey    string    `json:"contact_key"`
+	Nickname      string    `json:"nickname"`
+	EncryptionKey *string   `json:"encryption_key,omitempty"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 // GetContacts returns all contacts for the given owner, ordered by nickname.
+// Joins the users table to include each contact's encryption key.
 func (s *Store) GetContacts(ctx context.Context, ownerKey string) ([]*Contact, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT contact_key, nickname, updated_at FROM contacts
-		 WHERE owner_key = $1 ORDER BY nickname ASC`,
+		`SELECT c.contact_key, c.nickname, u.encryption_key, c.updated_at
+		 FROM contacts c
+		 LEFT JOIN users u ON u.identity_key = c.contact_key
+		 WHERE c.owner_key = $1 ORDER BY c.nickname ASC`,
 		ownerKey,
 	)
 	if err != nil {
@@ -201,7 +205,7 @@ func (s *Store) GetContacts(ctx context.Context, ownerKey string) ([]*Contact, e
 	var contacts []*Contact
 	for rows.Next() {
 		c := &Contact{}
-		if err := rows.Scan(&c.ContactKey, &c.Nickname, &c.UpdatedAt); err != nil {
+		if err := rows.Scan(&c.ContactKey, &c.Nickname, &c.EncryptionKey, &c.UpdatedAt); err != nil {
 			return nil, err
 		}
 		contacts = append(contacts, c)

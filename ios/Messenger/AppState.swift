@@ -118,23 +118,23 @@ final class AppState: ObservableObject {
     private func syncContactsFromServer() async {
         guard let serverContacts = try? await apiClient.getContacts() else { return }
         for sc in serverContacts {
+            let encKey = sc.encryptionKey ?? ""
             if let idx = contacts.firstIndex(where: { $0.identityKey == sc.contactKey }) {
-                // Update nickname if changed on server.
-                if contacts[idx].nickname != sc.nickname {
+                // Update nickname or encryption key if changed on server.
+                let existing = contacts[idx]
+                if existing.nickname != sc.nickname || (existing.encryptionKey.isEmpty && !encKey.isEmpty) {
                     contacts[idx] = Contact(identityKey: sc.contactKey,
-                                            encryptionKey: contacts[idx].encryptionKey,
+                                            encryptionKey: encKey.isEmpty ? existing.encryptionKey : encKey,
                                             nickname: sc.nickname)
                 }
             } else {
-                // New contact from server — fetch encryption key then add.
-                if let user = try? await apiClient.getUser(identityKey: sc.contactKey) {
-                    let contact = Contact(identityKey: sc.contactKey,
-                                         encryptionKey: user.encryptionKey,
-                                         nickname: sc.nickname)
-                    contacts.append(contact)
-                    if conversations[sc.contactKey] == nil {
-                        conversations[sc.contactKey] = localStore.loadMessages(forKey: sc.contactKey)
-                    }
+                // New contact from server — use encryption key from response.
+                let contact = Contact(identityKey: sc.contactKey,
+                                     encryptionKey: encKey,
+                                     nickname: sc.nickname)
+                contacts.append(contact)
+                if conversations[sc.contactKey] == nil {
+                    conversations[sc.contactKey] = localStore.loadMessages(forKey: sc.contactKey)
                 }
             }
         }
