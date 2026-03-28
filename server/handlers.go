@@ -207,6 +207,14 @@ func (s *Server) HandleGetNexus(w http.ResponseWriter, r *http.Request) {
 		members = []*NexusMember{}
 	}
 
+	// Populate the caller's role from the members list.
+	for _, m := range members {
+		if m.IdentityKey == identityKey {
+			nexus.Role = m.Role
+			break
+		}
+	}
+
 	writeJSON(w, http.StatusOK, nexusDetailResponse{Nexus: *nexus, Members: members})
 }
 
