@@ -1,29 +1,54 @@
 import { makeAuthHeader, makeAuthToken } from './crypto.js'
 import { getServerUrl } from './storage.js'
 
-// ── Server response shapes ────────────────────────────────────────────────────
+// ── Server response shapes ──────────────────────────────────────────────────
 
 export interface ServerUser {
   identity_key: string
   encryption_key: string
+  username?: string
   created_at: string
 }
 
-export interface ServerContact {
-  contact_key: string
-  nickname: string
-  encryption_key?: string
-  updated_at: string
+export interface ServerNexus {
+  id: string
+  name: string
+  creator_key: string
+  created_at: string
+  role: string
+}
+
+export interface ServerNexusDetail extends ServerNexus {
+  members: ServerNexusMember[]
+}
+
+export interface ServerNexusMember {
+  identity_key: string
+  username?: string
+  encryption_key: string
+  role: string
+  joined_at: string
+}
+
+export interface ServerInviteCode {
+  id: string
+  nexus_id: string
+  code: string
+  created_by: string
+  max_uses?: number
+  use_count: number
+  revoked: boolean
+  created_at: string
+  expires_at?: string
 }
 
 export interface ServerMessage {
   id: string
+  nexus_id: string
   sender_key: string
-  recipient_key?: string
+  recipient_key: string
   ephemeral_key: string
   ciphertext: string
-  sender_ephemeral_key?: string
-  sender_ciphertext?: string
   created_at: string
 }
 
@@ -32,21 +57,19 @@ export interface SendMessageResponse {
   created_at: string
 }
 
-export interface SendMessageParams {
-  recipientKey: string
-  ephemeralKey: string
-  ciphertext: string
-  senderEphemeralKey: string
-  senderCiphertext: string
+export interface JoinResponse {
+  nexus_id: string
+  name: string
 }
 
-export interface GetHistoryParams {
-  limit?: number
-  since?: Date | null
-  beforeId?: string | null
+export interface MemberEvent {
+  type: 'member_joined' | 'member_left' | 'member_kicked'
+  nexus_id: string
+  identity_key: string
+  username?: string
 }
 
-// ── HTTP helpers ──────────────────────────────────────────────────────────────
+// ── HTTP helpers ────────────────────────────────────────────────────────────
 
 async function req(path: string, opts: RequestInit = {}, signingPriv?: Uint8Array): Promise<Response> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json', ...(opts.headers as Record<string, string> ?? {}) }
@@ -61,7 +84,7 @@ async function checkOk(resp: Response, expected = 200): Promise<void> {
   throw new Error(msg)
 }
 
-// ── Endpoints ─────────────────────────────────────────────────────────────────
+// ── Users ───────────────────────────────────────────────────────────────────
 
 export async function registerUser(signingPriv: Uint8Array, identKeyB64: string, encKeyB64: string): Promise<void> {
   const resp = await req('/v1/users', {
@@ -78,26 +101,120 @@ export async function getUser(identityKey: string): Promise<ServerUser | null> {
   return resp.json() as Promise<ServerUser>
 }
 
-export async function sendMessage(signingPriv: Uint8Array, params: SendMessageParams): Promise<SendMessageResponse> {
-  const resp = await req('/v1/messages', {
+export async function setUsername(signingPriv: Uint8Array, username: string): Promise<void> {
+  const resp = await req('/v1/users/me/username', {
+    method: 'PUT',
+    body: JSON.stringify({ username }),
+  }, signingPriv)
+  await checkOk(resp, 204)
+}
+
+// ── Nexuses ─────────────────────────────────────────────────────────────────
+
+export async function createNexus(signingPriv: Uint8Array, name: string): Promise<ServerNexus> {
+  const resp = await req('/v1/nexuses', { method: 'POST', body: JSON.stringify({ name }) }, signingPriv)
+  await checkOk(resp, 201)
+  return resp.json() as Promise<ServerNexus>
+}
+
+export async function getNexuses(signingPriv: Uint8Array): Promise<ServerNexus[]> {
+  const resp = await req('/v1/nexuses', {}, signingPriv)
+  await checkOk(resp)
+  return resp.json() as Promise<ServerNexus[]>
+}
+
+export async function getNexus(signingPriv: Uint8Array, nexusId: string): Promise<ServerNexusDetail> {
+  const resp = await req(`/v1/nexuses/${nexusId}`, {}, signingPriv)
+  await checkOk(resp)
+  return resp.json() as Promise<ServerNexusDetail>
+}
+
+export async function updateNexus(signingPriv: Uint8Array, nexusId: string, name: string): Promise<void> {
+  const resp = await req(`/v1/nexuses/${nexusId}`, { method: 'PUT', body: JSON.stringify({ name }) }, signingPriv)
+  await checkOk(resp, 204)
+}
+
+export async function deleteNexus(signingPriv: Uint8Array, nexusId: string): Promise<void> {
+  const resp = await req(`/v1/nexuses/${nexusId}`, { method: 'DELETE' }, signingPriv)
+  await checkOk(resp, 204)
+}
+
+// ── Members ─────────────────────────────────────────────────────────────────
+
+export async function getMembers(signingPriv: Uint8Array, nexusId: string): Promise<ServerNexusMember[]> {
+  const resp = await req(`/v1/nexuses/${nexusId}/members`, {}, signingPriv)
+  await checkOk(resp)
+  return resp.json() as Promise<ServerNexusMember[]>
+}
+
+export async function kickMember(signingPriv: Uint8Array, nexusId: string, identityKey: string): Promise<void> {
+  const resp = await req(`/v1/nexuses/${nexusId}/members/${encodeURIComponent(identityKey)}`, { method: 'DELETE' }, signingPriv)
+  await checkOk(resp, 204)
+}
+
+export async function leaveNexus(signingPriv: Uint8Array, nexusId: string): Promise<void> {
+  const resp = await req(`/v1/nexuses/${nexusId}/leave`, { method: 'POST' }, signingPriv)
+  await checkOk(resp, 204)
+}
+
+// ── Invites ─────────────────────────────────────────────────────────────────
+
+export async function createInvite(signingPriv: Uint8Array, nexusId: string, opts?: { maxUses?: number; expiresInHours?: number }): Promise<ServerInviteCode> {
+  const body: Record<string, unknown> = {}
+  if (opts?.maxUses) body.max_uses = opts.maxUses
+  if (opts?.expiresInHours) body.expires_in_hours = opts.expiresInHours
+  const resp = await req(`/v1/nexuses/${nexusId}/invites`, { method: 'POST', body: JSON.stringify(body) }, signingPriv)
+  await checkOk(resp, 201)
+  return resp.json() as Promise<ServerInviteCode>
+}
+
+export async function getInvites(signingPriv: Uint8Array, nexusId: string): Promise<ServerInviteCode[]> {
+  const resp = await req(`/v1/nexuses/${nexusId}/invites`, {}, signingPriv)
+  await checkOk(resp)
+  return resp.json() as Promise<ServerInviteCode[]>
+}
+
+export async function revokeInvite(signingPriv: Uint8Array, nexusId: string, inviteId: string): Promise<void> {
+  const resp = await req(`/v1/nexuses/${nexusId}/invites/${inviteId}`, { method: 'DELETE' }, signingPriv)
+  await checkOk(resp, 204)
+}
+
+// ── Join ────────────────────────────────────────────────────────────────────
+
+export async function joinNexus(signingPriv: Uint8Array, code: string): Promise<JoinResponse> {
+  const resp = await req('/v1/join', { method: 'POST', body: JSON.stringify({ code }) }, signingPriv)
+  await checkOk(resp)
+  return resp.json() as Promise<JoinResponse>
+}
+
+// ── Messages ────────────────────────────────────────────────────────────────
+
+export interface Envelope {
+  recipient_key: string
+  ephemeral_key: string
+  ciphertext: string
+}
+
+export async function sendNexusMessage(signingPriv: Uint8Array, nexusId: string, envelopes: Envelope[]): Promise<SendMessageResponse> {
+  const resp = await req(`/v1/nexuses/${nexusId}/messages`, {
     method: 'POST',
-    body: JSON.stringify({
-      recipient_key: params.recipientKey,
-      ephemeral_key: params.ephemeralKey,
-      ciphertext: params.ciphertext,
-      sender_ephemeral_key: params.senderEphemeralKey,
-      sender_ciphertext: params.senderCiphertext,
-    }),
+    body: JSON.stringify({ envelopes }),
   }, signingPriv)
   await checkOk(resp, 201)
   return resp.json() as Promise<SendMessageResponse>
 }
 
-export async function getHistory(signingPriv: Uint8Array, { limit = 100, since = null, beforeId = null }: GetHistoryParams = {}): Promise<ServerMessage[]> {
+export interface GetHistoryParams {
+  limit?: number
+  since?: Date | null
+  beforeId?: string | null
+}
+
+export async function getNexusHistory(signingPriv: Uint8Array, nexusId: string, { limit = 100, since = null, beforeId = null }: GetHistoryParams = {}): Promise<ServerMessage[]> {
   const p = new URLSearchParams({ limit: String(limit) })
   if (since) p.set('since', since.toISOString())
   if (beforeId) p.set('before_id', beforeId)
-  const resp = await req(`/v1/messages/history?${p}`, {}, signingPriv)
+  const resp = await req(`/v1/nexuses/${nexusId}/messages?${p}`, {}, signingPriv)
   await checkOk(resp)
   return resp.json() as Promise<ServerMessage[]>
 }
@@ -108,29 +225,18 @@ export async function getPendingMessages(signingPriv: Uint8Array): Promise<Serve
   return resp.json() as Promise<ServerMessage[]>
 }
 
-export async function getContacts(signingPriv: Uint8Array): Promise<ServerContact[]> {
-  const resp = await req('/v1/contacts', {}, signingPriv)
-  await checkOk(resp)
-  return resp.json() as Promise<ServerContact[]>
-}
+// ── Device Token ────────────────────────────────────────────────────────────
 
-export async function upsertContact(signingPriv: Uint8Array, contactKey: string, nickname: string): Promise<void> {
-  const resp = await req(`/v1/contacts/${encodeURIComponent(contactKey)}`, {
-    method: 'PUT',
-    body: JSON.stringify({ nickname }),
-  }, signingPriv)
+export async function registerDeviceToken(signingPriv: Uint8Array, token: string): Promise<void> {
+  const resp = await req('/v1/device-token', { method: 'PUT', body: JSON.stringify({ token }) }, signingPriv)
   await checkOk(resp, 204)
 }
 
-export async function deleteContact(signingPriv: Uint8Array, contactKey: string): Promise<void> {
-  const resp = await req(`/v1/contacts/${encodeURIComponent(contactKey)}`, { method: 'DELETE' }, signingPriv)
-  await checkOk(resp, 204)
-}
-
-// ── WebSocket ─────────────────────────────────────────────────────────────────
+// ── WebSocket ───────────────────────────────────────────────────────────────
 
 export interface WebSocketCallbacks {
-  onMessage: (frame: ServerMessage) => void
+  onMessage: (frame: ServerMessage & { sender_username?: string }) => void
+  onMemberEvent?: (event: MemberEvent) => void
   onOpen?: () => void
   onClose?: () => void
 }
@@ -145,10 +251,13 @@ export function openWebSocket(signingPriv: Uint8Array, callbacks: WebSocketCallb
   ws.addEventListener('error', () => callbacks.onClose?.())
   ws.addEventListener('message', ({ data }) => {
     try {
-      const frame = JSON.parse(data as string) as ServerMessage & { type?: string }
-      if (frame.type !== 'message') return
-      callbacks.onMessage(frame)
-      ws.send(JSON.stringify({ type: 'ack', id: frame.id }))
+      const frame = JSON.parse(data as string) as { type: string; [k: string]: unknown }
+      if (frame.type === 'message') {
+        callbacks.onMessage(frame as unknown as ServerMessage & { sender_username?: string })
+        ws.send(JSON.stringify({ type: 'ack', id: (frame as { id: string }).id }))
+      } else if (frame.type === 'member_joined' || frame.type === 'member_left' || frame.type === 'member_kicked') {
+        callbacks.onMemberEvent?.(frame as unknown as MemberEvent)
+      }
     } catch (e) {
       console.error('[ws] parse error', e)
     }

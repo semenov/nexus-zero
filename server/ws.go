@@ -11,24 +11,19 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// -------------------------------------------------------------------
-// Hub — manages connected WebSocket clients
-// -------------------------------------------------------------------
+// ── Hub ──────────────────────────────────────────────────────────────────────
 
 // Hub maintains a thread-safe registry of active WebSocket clients, keyed by
-// identity key. Multiple clients (e.g. iOS + web) may share the same identity key.
+// identity key. Multiple clients may share the same identity key.
 type Hub struct {
 	mu      sync.RWMutex
 	clients map[string]map[*wsClient]struct{}
 }
 
-// NewHub allocates a Hub.
 func NewHub() *Hub {
 	return &Hub{clients: make(map[string]map[*wsClient]struct{})}
 }
 
-// register adds a client to the hub. Multiple clients with the same identity
-// key are all kept active (e.g. the same account open on iOS and web).
 func (h *Hub) register(identityKey string, c *wsClient) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -38,7 +33,6 @@ func (h *Hub) register(identityKey string, c *wsClient) {
 	h.clients[identityKey][c] = struct{}{}
 }
 
-// unregister removes a specific client from the hub.
 func (h *Hub) unregister(identityKey string, c *wsClient) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -50,57 +44,35 @@ func (h *Hub) unregister(identityKey string, c *wsClient) {
 	}
 }
 
-// IsConnected returns true if the identity key has at least one active WebSocket.
-func (h *Hub) IsConnected(identityKey string) bool {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-	return len(h.clients[identityKey]) > 0
-}
-
-// Deliver pushes a message to all connected clients for the given identity key.
-// Each send is non-blocking; a full buffer drops the message for that client
-// (it can recover via GET /v1/messages/pending).
-func (h *Hub) Deliver(identityKey string, msg *Message) {
+// Deliver pushes a message envelope to all connected clients for the given
+// identity key. Non-blocking; drops if the buffer is full.
+func (h *Hub) Deliver(identityKey string, env wsMessageEnvelope) {
 	h.mu.RLock()
 	set, ok := h.clients[identityKey]
 	if !ok {
 		h.mu.RUnlock()
 		return
 	}
-	// Snapshot client pointers so we don't hold the lock while sending.
 	targets := make([]*wsClient, 0, len(set))
 	for c := range set {
 		targets = append(targets, c)
 	}
 	h.mu.RUnlock()
 
-	env := wsMessageEnvelope{
-		Type:         "message",
-		ID:           msg.ID,
-		SenderKey:    msg.SenderKey,
-		EphemeralKey: msg.EphemeralKey,
-		Ciphertext:   msg.Ciphertext,
-		CreatedAt:    msg.CreatedAt,
-	}
 	for _, c := range targets {
 		select {
 		case c.send <- env:
 		default:
-			log.Printf("ws: send buffer full for %s, dropping message %s", identityKey, msg.ID)
+			log.Printf("ws: send buffer full for %s, dropping message %s", identityKey, env.ID)
 		}
 	}
 }
 
-// DeliverToSender pushes a sent-message echo to all of the sender's connected
-// clients other than the one that originated the send (identified by
-// originConn, which may be nil to deliver to all). This allows other devices
-// signed in with the same account to see outgoing messages in real time.
-func (h *Hub) DeliverToSender(senderKey string, msg *Message) {
-	if msg.SenderEphemeralKey == nil || msg.SenderCiphertext == nil {
-		return // no sender copy, nothing to echo
-	}
+// DeliverEvent pushes a membership event to all connected clients for the
+// given identity key.
+func (h *Hub) DeliverEvent(identityKey string, event wsMemberEvent) {
 	h.mu.RLock()
-	set, ok := h.clients[senderKey]
+	set, ok := h.clients[identityKey]
 	if !ok {
 		h.mu.RUnlock()
 		return
@@ -111,79 +83,56 @@ func (h *Hub) DeliverToSender(senderKey string, msg *Message) {
 	}
 	h.mu.RUnlock()
 
-	env := wsMessageEnvelope{
-		Type:               "message",
-		ID:                 msg.ID,
-		SenderKey:          msg.SenderKey,
-		RecipientKey:       msg.RecipientKey,
-		EphemeralKey:       msg.EphemeralKey,
-		Ciphertext:         msg.Ciphertext,
-		SenderEphemeralKey: *msg.SenderEphemeralKey,
-		SenderCiphertext:   *msg.SenderCiphertext,
-		CreatedAt:          msg.CreatedAt,
-	}
 	for _, c := range targets {
 		select {
-		case c.send <- env:
+		case c.send <- event:
 		default:
-			log.Printf("ws: send buffer full for sender echo %s, dropping message %s", senderKey, msg.ID)
 		}
 	}
 }
 
-// -------------------------------------------------------------------
-// wsClient
-// -------------------------------------------------------------------
+// ── WebSocket types ──────────────────────────────────────────────────────────
 
-// wsClient represents a single WebSocket connection.
 type wsClient struct {
 	identityKey string
 	conn        *websocket.Conn
-	send        chan wsMessageEnvelope
+	send        chan any // wsMessageEnvelope or wsMemberEvent
 }
 
-// wsMessageEnvelope is the outgoing JSON frame sent to clients.
-// The optional fields are populated only when delivering an echo to the
-// sender's other connected devices (so they can decrypt the sent message
-// using the sender copy and know which conversation it belongs to).
 type wsMessageEnvelope struct {
-	Type               string    `json:"type"`
-	ID                 string    `json:"id"`
-	SenderKey          string    `json:"sender_key"`
-	EphemeralKey       string    `json:"ephemeral_key"`
-	Ciphertext         string    `json:"ciphertext"`
-	CreatedAt          time.Time `json:"created_at"`
-	RecipientKey       string    `json:"recipient_key,omitempty"`
-	SenderEphemeralKey string    `json:"sender_ephemeral_key,omitempty"`
-	SenderCiphertext   string    `json:"sender_ciphertext,omitempty"`
+	Type           string    `json:"type"`
+	ID             string    `json:"id"`
+	NexusID        string    `json:"nexus_id"`
+	SenderKey      string    `json:"sender_key"`
+	SenderUsername string    `json:"sender_username,omitempty"`
+	EphemeralKey   string    `json:"ephemeral_key"`
+	Ciphertext     string    `json:"ciphertext"`
+	CreatedAt      time.Time `json:"created_at"`
 }
 
-// wsAck is the incoming JSON frame from clients acknowledging delivery.
+type wsMemberEvent struct {
+	Type        string `json:"type"` // member_joined, member_left, member_kicked
+	NexusID     string `json:"nexus_id"`
+	IdentityKey string `json:"identity_key"`
+	Username    string `json:"username,omitempty"`
+}
+
 type wsAck struct {
 	Type string `json:"type"`
 	ID   string `json:"id"`
 }
 
-// -------------------------------------------------------------------
-// WebSocket upgrader
-// -------------------------------------------------------------------
+// ── Upgrader ─────────────────────────────────────────────────────────────────
 
 var upgrader = websocket.Upgrader{
 	HandshakeTimeout: 10 * time.Second,
 	ReadBufferSize:   1024,
 	WriteBufferSize:  4096,
-	// Allow all origins for WebSocket connections.
-	CheckOrigin: func(r *http.Request) bool { return true },
+	CheckOrigin:      func(r *http.Request) bool { return true },
 }
 
-// -------------------------------------------------------------------
-// ServeWS — HTTP handler that upgrades to WebSocket
-// -------------------------------------------------------------------
+// ── ServeWS ──────────────────────────────────────────────────────────────────
 
-// ServeWS upgrades the connection to WebSocket, authenticates via the ?auth=
-// query parameter (same format as the Authorization header value without the
-// "Ed25519 " scheme prefix), and then pumps outgoing messages and incoming
-// ACKs.
 func (s *Server) ServeWS(w http.ResponseWriter, r *http.Request) {
 	authParam := r.URL.Query().Get("auth")
 	if authParam == "" {
@@ -206,16 +155,14 @@ func (s *Server) ServeWS(w http.ResponseWriter, r *http.Request) {
 	c := &wsClient{
 		identityKey: identityKey,
 		conn:        conn,
-		send:        make(chan wsMessageEnvelope, 64),
+		send:        make(chan any, 64),
 	}
 	s.hub.register(identityKey, c)
 	defer s.hub.unregister(identityKey, c)
 
 	log.Printf("ws: client connected: %s", identityKey)
 
-	// done is closed by the read loop when it exits.
 	done := make(chan struct{})
-
 	go func() {
 		defer close(done)
 		c.readLoop(s.store)
@@ -225,8 +172,6 @@ func (s *Server) ServeWS(w http.ResponseWriter, r *http.Request) {
 	log.Printf("ws: client disconnected: %s", identityKey)
 }
 
-// readLoop reads incoming frames (ACKs) from the client. Any other frame type
-// is silently ignored.
 func (c *wsClient) readLoop(store *Store) {
 	defer c.conn.Close()
 	c.conn.SetReadLimit(512)
@@ -261,8 +206,6 @@ func (c *wsClient) readLoop(store *Store) {
 	}
 }
 
-// writeLoop writes outgoing messages from the send channel to the WebSocket.
-// It also sends periodic pings to detect dead connections.
 func (c *wsClient) writeLoop(done <-chan struct{}) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer func() {

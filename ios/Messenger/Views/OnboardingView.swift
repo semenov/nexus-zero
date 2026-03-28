@@ -6,12 +6,13 @@ struct OnboardingView: View {
 
     @EnvironmentObject private var appState: AppState
 
-    private enum Step { case choice, create, restore }
+    private enum Step { case choice, create, restore, username }
 
     @State private var step: Step = .choice
     @State private var isWorking = false
     @State private var generatedKey: String? = nil
     @State private var backupCode: String = ""
+    @State private var usernameInput: String = ""
     @State private var errorMessage: String? = nil
     @State private var showCopiedToast = false
 
@@ -24,9 +25,10 @@ struct OnboardingView: View {
                     brandingSection
                     Spacer()
                     switch step {
-                    case .choice:  choiceSection
-                    case .create:  createSection
-                    case .restore: restoreSection
+                    case .choice:   choiceSection
+                    case .create:   createSection
+                    case .restore:  restoreSection
+                    case .username: usernameSection
                     }
                     Spacer()
                 }
@@ -90,7 +92,6 @@ struct OnboardingView: View {
     private var createSection: some View {
         VStack(spacing: 16) {
             if let key = generatedKey {
-                // Show public identity key + QR
                 VStack(spacing: 16) {
                     HStack {
                         Text("> YOUR IDENTITY KEY")
@@ -134,8 +135,8 @@ struct OnboardingView: View {
                 .overlay(Rectangle().strokeBorder(Theme.border, lineWidth: 1))
                 .padding(.horizontal)
 
-                cyberButton("[ INITIALIZE ]", color: Theme.neonGreen) {
-                    appState.setup()
+                cyberButton("[ CONTINUE ]", color: Theme.neonGreen) {
+                    step = .username
                 }
                 .padding(.horizontal)
 
@@ -188,6 +189,42 @@ struct OnboardingView: View {
             .padding(.horizontal)
 
             backButton
+        }
+    }
+
+    // MARK: - Username screen
+
+    private var usernameSection: some View {
+        VStack(spacing: 16) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("> CHOOSE YOUR USERNAME")
+                    .font(Theme.mono(11, weight: .bold))
+                    .foregroundStyle(Theme.textSecondary)
+
+                Text("> THIS IS HOW OTHERS WILL SEE YOU IN CHATS")
+                    .font(Theme.mono(9))
+                    .foregroundStyle(Theme.textDim)
+
+                TextField("", text: $usernameInput)
+                    .font(Theme.mono(14))
+                    .foregroundStyle(Theme.textPrimary)
+                    .tint(Theme.neonGreen)
+                    .padding(12)
+                    .background(Theme.surface)
+                    .overlay(Rectangle().strokeBorder(Theme.border, lineWidth: 1))
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+            }
+            .padding(.horizontal)
+
+            errorView
+
+            cyberButton(isWorking ? "SETTING UP…" : "[ INITIALIZE ]",
+                        color: isWorking ? Theme.dimGreen : Theme.neonGreen,
+                        disabled: isWorking || usernameInput.trimmingCharacters(in: .whitespaces).count < 2) {
+                Task { await setUsernameAndFinish() }
+            }
+            .padding(.horizontal)
         }
     }
 
@@ -253,8 +290,27 @@ struct OnboardingView: View {
         errorMessage = nil
         do {
             try appState.keyManager.restoreFromBackupCode(backupCode)
-            // Register on this server if not already registered.
             try? await appState.apiClient.registerUser()
+            // Check if user already has a username on server.
+            await appState.checkExistingUsername()
+            if appState.hasUsername {
+                appState.setup()
+            } else {
+                step = .username
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+        isWorking = false
+    }
+
+    private func setUsernameAndFinish() async {
+        let name = usernameInput.trimmingCharacters(in: .whitespaces)
+        guard name.count >= 2 else { return }
+        isWorking = true
+        errorMessage = nil
+        do {
+            try await appState.chooseUsername(name)
             appState.setup()
         } catch {
             errorMessage = error.localizedDescription

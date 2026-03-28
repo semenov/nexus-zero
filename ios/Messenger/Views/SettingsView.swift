@@ -9,6 +9,9 @@ struct SettingsView: View {
     @State private var showCopiedToast = false
     @State private var revealPrivateKey = false
     @State private var showPrivateKeyCopied = false
+    @State private var newUsername: String = ""
+    @State private var isChangingUsername = false
+    @State private var usernameError: String? = nil
 
     private var identityKey: String {
         appState.keyManager.identityKeyString
@@ -21,16 +24,64 @@ struct SettingsView: View {
 
                 ScrollView {
                     VStack(spacing: 0) {
+                        // MARK: Username section
+                        sectionHeader("> USERNAME")
+
+                        VStack(alignment: .leading, spacing: 12) {
+                            HStack {
+                                Text("> \(appState.username ?? "NOT SET")")
+                                    .font(Theme.mono(14, weight: .bold))
+                                    .foregroundStyle(Theme.neonCyan)
+                                Spacer()
+                            }
+
+                            HStack(spacing: 8) {
+                                TextField("new username", text: $newUsername)
+                                    .font(Theme.mono(12))
+                                    .foregroundStyle(Theme.textPrimary)
+                                    .tint(Theme.neonCyan)
+                                    .padding(8)
+                                    .background(Theme.surface)
+                                    .overlay(Rectangle().strokeBorder(Theme.border, lineWidth: 1))
+                                    .autocorrectionDisabled()
+                                    .textInputAutocapitalization(.never)
+
+                                Button {
+                                    Task { await changeUsername() }
+                                } label: {
+                                    Text(isChangingUsername ? "…" : "SET")
+                                        .font(Theme.mono(11, weight: .bold))
+                                        .foregroundStyle(Theme.neonCyan)
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 8)
+                                        .overlay(
+                                            Rectangle().strokeBorder(Theme.neonCyan.opacity(0.6), lineWidth: 1)
+                                        )
+                                }
+                                .disabled(newUsername.trimmingCharacters(in: .whitespaces).count < 2 || isChangingUsername)
+                            }
+
+                            if let err = usernameError {
+                                Text(err)
+                                    .font(Theme.mono(10))
+                                    .foregroundStyle(Theme.neonMagenta)
+                            }
+                        }
+                        .padding(16)
+                        .background(Theme.surface)
+                        .overlay(Rectangle().strokeBorder(Theme.border, lineWidth: 1))
+                        .padding(.horizontal)
+                        .padding(.bottom, 24)
+
                         // MARK: Identity section
                         sectionHeader("> IDENTITY")
 
                         VStack(alignment: .leading, spacing: 16) {
-                            Text("> SHARE YOUR IDENTITY KEY WITH OTHERS\n> SO THEY CAN MESSAGE YOU")
+                            Text("> YOUR CRYPTOGRAPHIC IDENTITY KEY")
                                 .font(Theme.mono(11))
                                 .foregroundStyle(Theme.textSecondary)
                                 .frame(maxWidth: .infinity, alignment: .leading)
 
-                            // QR code with neon green border and glow
                             if let qrImage = generateQRCode(from: identityKey) {
                                 Image(uiImage: qrImage)
                                     .interpolation(.none)
@@ -47,7 +98,6 @@ struct SettingsView: View {
                                     .frame(maxWidth: .infinity)
                             }
 
-                            // Key text
                             Text(identityKey)
                                 .font(Theme.mono(10))
                                 .foregroundStyle(Theme.textSecondary)
@@ -55,7 +105,6 @@ struct SettingsView: View {
                                 .textSelection(.enabled)
                                 .frame(maxWidth: .infinity)
 
-                            // Copy button
                             Button {
                                 UIPasteboard.general.string = identityKey
                                 showCopiedToast = true
@@ -156,7 +205,7 @@ struct SettingsView: View {
                         sectionHeader("> SYSTEM INFO")
 
                         VStack(spacing: 0) {
-                            terminalRow(label: "VERSION", value: "1.0.0")
+                            terminalRow(label: "VERSION", value: "2.0.0")
                             Divider().background(Theme.border)
                             terminalRow(label: "ENCRYPTION", value: "X25519 + CHACHAPOLY")
                             Divider().background(Theme.border)
@@ -227,6 +276,22 @@ struct SettingsView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
+    }
+
+    // MARK: - Actions
+
+    private func changeUsername() async {
+        let name = newUsername.trimmingCharacters(in: .whitespaces)
+        guard name.count >= 2 else { return }
+        isChangingUsername = true
+        usernameError = nil
+        do {
+            try await appState.chooseUsername(name)
+            newUsername = ""
+        } catch {
+            usernameError = error.localizedDescription
+        }
+        isChangingUsername = false
     }
 
     // MARK: - QR generation

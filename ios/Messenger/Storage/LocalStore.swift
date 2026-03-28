@@ -1,6 +1,6 @@
 import Foundation
 
-/// Persists contacts and per-conversation message history as JSON files in the
+/// Persists nexuses and per-nexus message history as JSON files in the
 /// app's Documents directory.
 final class LocalStore {
 
@@ -10,67 +10,64 @@ final class LocalStore {
         fm.urls(for: .documentDirectory, in: .userDomainMask)[0]
     }
 
-    // MARK: - Contacts
+    // MARK: - Username
 
-    private var contactsURL: URL {
-        documentsURL.appendingPathComponent("contacts.json")
+    private var usernameURL: URL {
+        documentsURL.appendingPathComponent("username.json")
     }
 
-    func saveContacts(_ contacts: [Contact]) {
-        write(contacts, to: contactsURL)
+    func saveUsername(_ username: String) {
+        write(username, to: usernameURL)
     }
 
-    func loadContacts() -> [Contact] {
-        read([Contact].self, from: contactsURL) ?? []
+    func loadUsername() -> String? {
+        read(String.self, from: usernameURL)
+    }
+
+    // MARK: - Nexuses
+
+    private var nexusesURL: URL {
+        documentsURL.appendingPathComponent("nexuses.json")
+    }
+
+    func saveNexuses(_ nexuses: [Nexus]) {
+        write(nexuses, to: nexusesURL)
+    }
+
+    func loadNexuses() -> [Nexus] {
+        read([Nexus].self, from: nexusesURL) ?? []
     }
 
     // MARK: - Messages
 
-    private func messagesURL(forKey identityKey: String) -> URL {
-        // Use a SHA-256 hash of the key as the filename to avoid filesystem
-        // issues with special characters in base64url keys.
-        let safe = identityKey.replacingOccurrences(of: "/", with: "_")
-                              .replacingOccurrences(of: "+", with: "-")
+    private func messagesURL(forNexus nexusId: String) -> URL {
+        let safe = nexusId.replacingOccurrences(of: "/", with: "_")
+                          .replacingOccurrences(of: "+", with: "-")
         return documentsURL.appendingPathComponent("msgs_\(safe).json")
     }
 
-    func saveMessages(_ messages: [StoredMessage], forKey identityKey: String) {
-        write(messages, to: messagesURL(forKey: identityKey))
+    func saveMessages(_ messages: [StoredMessage], forNexus nexusId: String) {
+        write(messages, to: messagesURL(forNexus: nexusId))
     }
 
-    func loadMessages(forKey identityKey: String) -> [StoredMessage] {
-        read([StoredMessage].self, from: messagesURL(forKey: identityKey)) ?? []
+    func loadMessages(forNexus nexusId: String) -> [StoredMessage] {
+        read([StoredMessage].self, from: messagesURL(forNexus: nexusId)) ?? []
     }
 
-    func appendMessage(_ message: StoredMessage, forKey identityKey: String) {
-        var existing = loadMessages(forKey: identityKey)
-        // Avoid duplicates by ID.
+    func appendMessage(_ message: StoredMessage, forNexus nexusId: String) {
+        var existing = loadMessages(forNexus: nexusId)
         guard !existing.contains(where: { $0.id == message.id }) else { return }
         existing.append(message)
-        saveMessages(existing, forKey: identityKey)
+        saveMessages(existing, forNexus: nexusId)
     }
 
-    /// Returns the newest `createdAt` date across all stored conversation files,
-    /// or nil if no messages are stored locally.
-    func newestMessageDate() -> Date? {
-        guard let items = try? fm.contentsOfDirectory(at: documentsURL,
-                                                       includingPropertiesForKeys: nil) else { return nil }
-        var newest: Date? = nil
-        for url in items where url.lastPathComponent.hasPrefix("msgs_") && url.pathExtension == "json" {
-            guard let msgs = read([StoredMessage].self, from: url) else { continue }
-            for m in msgs {
-                if newest == nil || m.createdAt > newest! {
-                    newest = m.createdAt
-                }
-            }
-        }
-        return newest
+    func newestMessageDate(forNexus nexusId: String) -> Date? {
+        let msgs = loadMessages(forNexus: nexusId)
+        return msgs.max(by: { $0.createdAt < $1.createdAt })?.createdAt
     }
 
-    /// Returns the ID of the oldest stored message for the given conversation,
-    /// or nil if no messages exist locally for that contact.
-    func oldestMessageID(forKey identityKey: String) -> String? {
-        let msgs = loadMessages(forKey: identityKey)
+    func oldestMessageID(forNexus nexusId: String) -> String? {
+        let msgs = loadMessages(forNexus: nexusId)
         return msgs.min(by: { $0.createdAt < $1.createdAt })?.id
     }
 

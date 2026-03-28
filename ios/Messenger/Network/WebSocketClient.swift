@@ -1,13 +1,15 @@
 import Foundation
 
 /// Maintains a persistent WebSocket connection to the server and delivers
-/// incoming messages to the registered callback.
+/// incoming messages and member events to the registered callbacks.
 ///
 /// Reconnection uses exponential back-off capped at 30 seconds.
 final class WebSocketClient: ObservableObject {
 
     /// Called on the main actor whenever a new message frame arrives.
     var onMessage: ((MessageResponse) -> Void)?
+    /// Called on the main actor whenever a membership event arrives.
+    var onMemberEvent: ((MemberEventFrame) -> Void)?
 
     private var task: URLSessionWebSocketTask?
     private var session: URLSession?
@@ -38,11 +40,6 @@ final class WebSocketClient: ObservableObject {
 
     // MARK: - Public API
 
-    /// Connects to the server WebSocket endpoint.
-    ///
-    /// - Parameters:
-    ///   - baseURL: Server base URL, e.g. `"http://localhost:8080"`.
-    ///   - authHeader: The full `Ed25519 <token>` authorization header value.
     func connect(baseURL: String, authHeader: String) {
         currentBaseURL = baseURL
         currentAuthHeader = authHeader
@@ -51,7 +48,6 @@ final class WebSocketClient: ObservableObject {
         openConnection()
     }
 
-    /// Disconnects and stops reconnection attempts.
     func disconnect() {
         shouldReconnect = false
         task?.cancel(with: .goingAway, reason: nil)
@@ -76,7 +72,6 @@ final class WebSocketClient: ObservableObject {
     }
 
     private func buildWebSocketURL() -> URL? {
-        // Strip "Ed25519 " prefix to get just the token for the query param.
         let token: String
         if currentAuthHeader.hasPrefix("Ed25519 ") {
             token = String(currentAuthHeader.dropFirst("Ed25519 ".count))
@@ -87,7 +82,6 @@ final class WebSocketClient: ObservableObject {
             return nil
         }
 
-        // Convert http/https to ws/wss.
         var wsBase = currentBaseURL
         if wsBase.hasPrefix("https://") {
             wsBase = "wss://" + wsBase.dropFirst("https://".count)
@@ -123,7 +117,6 @@ final class WebSocketClient: ObservableObject {
 
         print("WS: received frame: \(String(data: data, encoding: .utf8) ?? "<binary>")")
 
-        // Parse the envelope type first.
         guard let envelope = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let type_ = envelope["type"] as? String else {
             print("WS: failed to parse envelope")
@@ -140,6 +133,16 @@ final class WebSocketClient: ObservableObject {
                 sendAck(id: msg.id)
             } catch {
                 print("WS: decode error: \(error)")
+            }
+        } else if type_ == "member_joined" || type_ == "member_left" || type_ == "member_kicked" {
+            let event = MemberEventFrame(
+                type: type_,
+                nexusId: envelope["nexus_id"] as? String ?? "",
+                identityKey: envelope["identity_key"] as? String ?? "",
+                username: envelope["username"] as? String
+            )
+            DispatchQueue.main.async {
+                self.onMemberEvent?(event)
             }
         }
     }
@@ -168,15 +171,11 @@ final class WebSocketClient: ObservableObject {
     }
 }
 
-// MARK: - MessageResponse WebSocket compatibility
+// MARK: - Member event frame
 
-/// A minimal wrapper used only inside the WebSocket receive path so that the
-/// `type` field from the server envelope does not clash with `MessageResponse`.
-private struct WSMessageFrame: Decodable {
+struct MemberEventFrame {
     let type: String
-    let id: String
-    let senderKey: String
-    let ephemeralKey: String
-    let ciphertext: String
-    let createdAt: Date
+    let nexusId: String
+    let identityKey: String
+    let username: String?
 }

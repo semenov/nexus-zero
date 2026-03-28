@@ -3,10 +3,9 @@ import SwiftUI
 struct ConversationsView: View {
 
     @EnvironmentObject private var appState: AppState
-    @State private var showAddContact = false
+    @State private var showCreateNexus = false
+    @State private var showJoinNexus = false
     @State private var showSettings = false
-    @State private var renameTarget: Contact? = nil
-    @State private var renameText: String = ""
     @State private var navPath = NavigationPath()
 
     var body: some View {
@@ -15,14 +14,13 @@ struct ConversationsView: View {
                 Theme.background.ignoresSafeArea()
 
                 Group {
-                    if appState.contacts.isEmpty {
+                    if appState.nexuses.isEmpty {
                         emptyState
                     } else {
-                        contactList
+                        nexusList
                     }
                 }
             }
-            .navigationTitle("// MESSAGES")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(Theme.surface, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
@@ -37,14 +35,22 @@ struct ConversationsView: View {
                     }
                 }
                 ToolbarItem(placement: .principal) {
-                    Text("// MESSAGES")
+                    Text("// NEXUSES")
                         .font(Theme.mono(16, weight: .bold))
                         .foregroundStyle(Theme.neonGreen)
                         .neonGlow()
                 }
-                ToolbarItem(placement: .navigationBarTrailing) {
+                ToolbarItemGroup(placement: .navigationBarTrailing) {
                     Button {
-                        showAddContact = true
+                        showJoinNexus = true
+                    } label: {
+                        Text("J")
+                            .font(Theme.mono(14, weight: .bold))
+                            .foregroundStyle(Theme.neonCyan)
+                            .neonGlow(Theme.neonCyan)
+                    }
+                    Button {
+                        showCreateNexus = true
                     } label: {
                         Image(systemName: "plus")
                             .foregroundStyle(Theme.neonGreen)
@@ -52,41 +58,24 @@ struct ConversationsView: View {
                     }
                 }
             }
-            .sheet(isPresented: $showAddContact) {
-                AddContactView()
+            .sheet(isPresented: $showCreateNexus) {
+                CreateNexusView()
+            }
+            .sheet(isPresented: $showJoinNexus) {
+                JoinNexusView()
             }
             .sheet(isPresented: $showSettings) {
                 SettingsView()
             }
-            .alert("// RENAME", isPresented: Binding(
-                get: { renameTarget != nil },
-                set: { if !$0 { renameTarget = nil } }
-            )) {
-                TextField("nickname", text: $renameText)
-                    .autocorrectionDisabled()
-                Button("SAVE") {
-                    if let contact = renameTarget,
-                       !renameText.trimmingCharacters(in: .whitespaces).isEmpty {
-                        appState.renameContact(contact, to: renameText.trimmingCharacters(in: .whitespaces))
-                    }
-                    renameTarget = nil
-                }
-                Button("CANCEL", role: .cancel) { renameTarget = nil }
-            } message: {
-                if let c = renameTarget { Text(c.nickname) }
-            }
-            .onChange(of: renameTarget) { target in
-                renameText = target?.nickname ?? ""
-            }
-            .onChange(of: appState.pendingOpenContactKey) { key in
-                guard let key,
-                      let contact = appState.contacts.first(where: { $0.identityKey == key }) else { return }
+            .onChange(of: appState.pendingOpenNexusId) { nexusId in
+                guard let nexusId,
+                      let nexus = appState.nexuses.first(where: { $0.id == nexusId }) else { return }
                 navPath.removeLast(navPath.count)
-                navPath.append(contact)
-                appState.pendingOpenContactKey = nil
+                navPath.append(nexus)
+                appState.pendingOpenNexusId = nil
             }
-            .navigationDestination(for: Contact.self) { contact in
-                ChatView(contact: contact)
+            .navigationDestination(for: Nexus.self) { nexus in
+                ChatView(nexus: nexus)
             }
         }
         .preferredColorScheme(.dark)
@@ -100,31 +89,24 @@ struct ConversationsView: View {
                 .font(Theme.mono(48, weight: .bold))
                 .foregroundStyle(Theme.neonGreen)
                 .neonGlow()
-            Text("NO ACTIVE CHANNELS")
+            Text("NO NEXUSES")
                 .font(Theme.mono(14, weight: .bold))
                 .foregroundStyle(Theme.textSecondary)
-            Text("tap + to add a contact")
+            Text("tap + to create or J to join")
                 .font(Theme.mono(12))
                 .foregroundStyle(Theme.textDim)
         }
     }
 
-    private var contactList: some View {
+    private var nexusList: some View {
         ScrollView {
             LazyVStack(spacing: 1) {
-                ForEach(appState.contacts) { contact in
-                    NavigationLink(value: contact) {
-                        ContactRow(contact: contact,
-                                   lastMessage: appState.conversations[contact.identityKey]?.last)
+                ForEach(appState.nexuses) { nexus in
+                    NavigationLink(value: nexus) {
+                        NexusRow(nexus: nexus,
+                                 lastMessage: appState.conversations[nexus.id]?.last)
                     }
                     .buttonStyle(.plain)
-                    .contextMenu {
-                        Button {
-                            renameTarget = contact
-                        } label: {
-                            Label("Rename", systemImage: "pencil")
-                        }
-                    }
                     Divider().background(Theme.border)
                 }
             }
@@ -132,36 +114,42 @@ struct ConversationsView: View {
     }
 }
 
-// MARK: - ContactRow
+// MARK: - NexusRow
 
-private struct ContactRow: View {
-    let contact: Contact
+private struct NexusRow: View {
+    let nexus: Nexus
     let lastMessage: StoredMessage?
 
     var body: some View {
         HStack(spacing: 14) {
-            // Avatar
             ZStack {
                 RoundedRectangle(cornerRadius: 4)
                     .fill(Theme.surface)
                     .frame(width: 44, height: 44)
                     .overlay(
                         RoundedRectangle(cornerRadius: 4)
-                            .stroke(avatarColor(for: contact.identityKey), lineWidth: 1)
+                            .stroke(avatarColor(for: nexus.id), lineWidth: 1)
                     )
-                Text(contact.nickname.prefix(2).uppercased())
+                Text(nexus.name.prefix(2).uppercased())
                     .font(Theme.mono(14, weight: .bold))
-                    .foregroundStyle(avatarColor(for: contact.identityKey))
-                    .neonGlow(avatarColor(for: contact.identityKey), radius: 4)
+                    .foregroundStyle(avatarColor(for: nexus.id))
+                    .neonGlow(avatarColor(for: nexus.id), radius: 4)
             }
 
             VStack(alignment: .leading, spacing: 4) {
-                Text(contact.nickname.uppercased())
-                    .font(Theme.mono(13, weight: .bold))
-                    .foregroundStyle(Theme.neonGreen)
+                HStack {
+                    Text(nexus.name.uppercased())
+                        .font(Theme.mono(13, weight: .bold))
+                        .foregroundStyle(Theme.neonGreen)
+                    Spacer()
+                    Text("\(nexus.members.count)m")
+                        .font(Theme.mono(10))
+                        .foregroundStyle(Theme.textDim)
+                }
 
                 if let msg = lastMessage {
-                    Text(msg.isOutgoing ? "> \(msg.text)" : "< \(msg.text)")
+                    let sender = msg.isOutgoing ? "you" : (msg.senderUsername ?? String(msg.senderKey.prefix(6)))
+                    Text("\(sender): \(msg.text)")
                         .font(Theme.mono(11))
                         .foregroundStyle(Theme.textSecondary)
                         .lineLimit(1)
@@ -171,8 +159,6 @@ private struct ContactRow: View {
                         .foregroundStyle(Theme.textDim)
                 }
             }
-
-            Spacer()
 
             if let msg = lastMessage {
                 Text(msg.createdAt.formatted(.dateTime.hour().minute()))

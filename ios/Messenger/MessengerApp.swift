@@ -50,8 +50,6 @@ final class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
         willPresent notification: UNNotification,
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
-        // Suppress APNs push banners when app is in foreground — WebSocket delivers the message.
-        // Local notifications (scheduled by the app itself) are always shown.
         if notification.request.trigger is UNPushNotificationTrigger {
             completionHandler([])
         } else {
@@ -64,9 +62,9 @@ final class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
         didReceive response: UNNotificationResponse,
         withCompletionHandler completionHandler: @escaping () -> Void
     ) {
-        if let senderKey = response.notification.request.content.userInfo["sender_key"] as? String {
+        if let nexusId = response.notification.request.content.userInfo["nexus_id"] as? String {
             DispatchQueue.main.async {
-                self.appState?.pendingOpenContactKey = senderKey
+                self.appState?.pendingOpenNexusId = nexusId
             }
         }
         completionHandler()
@@ -78,7 +76,7 @@ private struct RootView: View {
     @EnvironmentObject private var appState: AppState
 
     var body: some View {
-        if appState.isOnboarded {
+        if appState.isOnboarded && appState.hasUsername {
             ContentView()
                 .onAppear { appState.setup() }
         } else {

@@ -1,24 +1,25 @@
 import * as crypto from './crypto.js'
 import * as storage from './storage.js'
-import type { Contact, StoredMessage } from './storage.js'
+import type { Nexus, NexusMember, StoredMessage } from './storage.js'
 import * as api from './api.js'
-import type { ServerMessage } from './api.js'
+import type { ServerMessage, MemberEvent } from './api.js'
 
-// ─── State ────────────────────────────────────────────────────────────────────
+// ─── State ──────────────────────────────────────────────────────────────────
 
 interface AppState {
   signingPriv: Uint8Array | null
   agreementPriv: Uint8Array | null
   myIdentKey: string
   myEncKey: string
-  contacts: Contact[]
+  username: string | null
+  nexuses: Nexus[]
   conversations: Record<string, StoredMessage[]>
   hasMoreHistory: Record<string, boolean>
-  activeChatKey: string | null
+  activeNexusId: string | null
   ws: WebSocket | null
   wsStatus: 'connected' | 'disconnected'
   wsReconnectTimer: ReturnType<typeof setTimeout> | null
-  modal: 'add-contact' | 'settings' | null
+  modal: 'create-nexus' | 'join-nexus' | 'nexus-settings' | 'settings' | null
   isMobile: boolean
 }
 
@@ -27,10 +28,11 @@ const S: AppState = {
   agreementPriv: null,
   myIdentKey: '',
   myEncKey: '',
-  contacts: [],
+  username: null,
+  nexuses: [],
   conversations: {},
   hasMoreHistory: {},
-  activeChatKey: null,
+  activeNexusId: null,
   ws: null,
   wsStatus: 'disconnected',
   wsReconnectTimer: null,
@@ -38,13 +40,13 @@ const S: AppState = {
   isMobile: false,
 }
 
-// ─── DOM helpers ──────────────────────────────────────────────────────────────
+// ─── DOM helpers ────────────────────────────────────────────────────────────
 
 function $<T extends HTMLElement = HTMLElement>(id: string): T {
   return document.getElementById(id) as T
 }
 
-// ─── Bootstrap ────────────────────────────────────────────────────────────────
+// ─── Bootstrap ──────────────────────────────────────────────────────────────
 
 export function init(): void {
   S.isMobile = window.innerWidth <= 640
@@ -55,13 +57,18 @@ export function init(): void {
     S.agreementPriv = keys.agreementPriv
     S.myIdentKey = crypto.identityKeyB64(S.signingPriv)
     S.myEncKey = crypto.encryptionKeyB64(S.agreementPriv)
-    S.contacts = storage.loadContacts()
-    for (const c of S.contacts) {
-      S.conversations[c.identityKey] = storage.loadMessages(c.identityKey)
+    S.username = storage.loadUsername()
+    S.nexuses = storage.loadNexuses()
+    for (const n of S.nexuses) {
+      S.conversations[n.id] = storage.loadMessages(n.id)
     }
-    showMain()
-    scheduleSync()
-    connectWS()
+    if (!S.username) {
+      showUsernameSetup()
+    } else {
+      showMain()
+      scheduleSync()
+      connectWS()
+    }
   } else {
     showOnboarding()
   }
@@ -69,11 +76,12 @@ export function init(): void {
   bindEvents()
 }
 
-// ─── Onboarding ───────────────────────────────────────────────────────────────
+// ─── Onboarding ─────────────────────────────────────────────────────────────
 
 function showOnboarding(): void {
   $('screen-ob').classList.remove('hidden')
   $('screen-main').classList.add('hidden')
+  $('screen-username').classList.add('hidden')
   showObPanel('ob-choose')
 }
 
@@ -103,11 +111,9 @@ async function handleGenerate(): Promise<void> {
 }
 
 function handleBackupDone(): void {
-  S.contacts = []
+  S.nexuses = []
   S.conversations = {}
-  showMain()
-  scheduleSync()
-  connectWS()
+  showUsernameSetup()
 }
 
 async function handleRestore(): Promise<void> {
@@ -134,87 +140,141 @@ async function handleRestore(): Promise<void> {
   }
 
   storage.saveKeys(S.signingPriv, S.agreementPriv)
-  S.contacts = storage.loadContacts()
-  for (const c of S.contacts) {
-    S.conversations[c.identityKey] = storage.loadMessages(c.identityKey)
+
+  // Try to load existing username from server.
+  try {
+    const user = await api.getUser(S.myIdentKey)
+    if (user?.username) {
+      S.username = user.username
+      storage.saveUsername(S.username)
+    }
+  } catch { /* ignore */ }
+
+  if (S.username) {
+    S.nexuses = storage.loadNexuses()
+    for (const n of S.nexuses) {
+      S.conversations[n.id] = storage.loadMessages(n.id)
+    }
+    showMain()
+    scheduleSync()
+    connectWS()
+  } else {
+    showUsernameSetup()
   }
-  showMain()
-  scheduleSync()
-  connectWS()
 }
 
 function setObError(msg: string): void {
   $('ob-error').textContent = msg
 }
 
-// ─── Main screen ──────────────────────────────────────────────────────────────
+// ─── Username setup ─────────────────────────────────────────────────────────
 
-function showMain(): void {
+function showUsernameSetup(): void {
   $('screen-ob').classList.add('hidden')
-  $('screen-main').classList.remove('hidden')
-  renderContacts()
-  renderWsStatus()
+  $('screen-main').classList.add('hidden')
+  $('screen-username').classList.remove('hidden')
 }
 
-// ─── Contact list ─────────────────────────────────────────────────────────────
+async function handleSetUsername(): Promise<void> {
+  if (!S.signingPriv) return
+  const input = $<HTMLInputElement>('username-input')
+  const username = input.value.trim()
+  $('username-error').textContent = ''
 
-function renderContacts(): void {
-  const list = $('contact-list')
-  if (S.contacts.length === 0) {
-    list.innerHTML = '<div class="contact-empty">no contacts yet<br><span>click + to add one</span></div>'
+  if (username.length < 2 || username.length > 32) {
+    $('username-error').textContent = 'Username must be 2-32 characters'
     return
   }
 
-  list.innerHTML = S.contacts.map(c => {
-    const msgs = S.conversations[c.identityKey] ?? []
+  try {
+    await api.setUsername(S.signingPriv, username)
+  } catch (e) {
+    $('username-error').textContent = (e as Error).message
+    return
+  }
+
+  S.username = username
+  storage.saveUsername(username)
+  showMain()
+  scheduleSync()
+  connectWS()
+}
+
+// ─── Main screen ────────────────────────────────────────────────────────────
+
+function showMain(): void {
+  $('screen-ob').classList.add('hidden')
+  $('screen-username').classList.add('hidden')
+  $('screen-main').classList.remove('hidden')
+  renderNexusList()
+  renderWsStatus()
+}
+
+// ─── Nexus list ─────────────────────────────────────────────────────────────
+
+function renderNexusList(): void {
+  const list = $('nexus-list')
+  if (S.nexuses.length === 0) {
+    list.innerHTML = '<div class="contact-empty">no nexuses yet<br><span>create one or join with a code</span></div>'
+    return
+  }
+
+  list.innerHTML = S.nexuses.map(n => {
+    const msgs = S.conversations[n.id] ?? []
     const last = msgs[msgs.length - 1]
-    const preview = last ? escHtml(last.text.slice(0, 60)) : ''
-    const active = S.activeChatKey === c.identityKey ? 'active' : ''
+    const preview = last
+      ? `<span class="preview-sender">${escHtml(last.senderUsername ?? last.senderKey.slice(0, 8))}:</span> ${escHtml(last.text.slice(0, 50))}`
+      : ''
+    const active = S.activeNexusId === n.id ? 'active' : ''
     return `
-      <div class="contact-item ${active}" data-key="${escAttr(c.identityKey)}">
-        <div class="contact-name">${escHtml(c.nickname.toUpperCase())}</div>
-        <div class="contact-key-short">${escHtml(c.identityKey.slice(0, 16))}…</div>
+      <div class="contact-item ${active}" data-nexus-id="${escAttr(n.id)}">
+        <div class="contact-name">${escHtml(n.name.toUpperCase())}</div>
+        <div class="contact-key-short">${n.members?.length ?? '?'} members</div>
         ${preview ? `<div class="contact-preview">${preview}</div>` : ''}
       </div>`
   }).join('')
 }
 
-// ─── Chat view ────────────────────────────────────────────────────────────────
+// ─── Chat view ──────────────────────────────────────────────────────────────
 
-function openChat(contact: Contact): void {
-  S.activeChatKey = contact.identityKey
-  S.conversations[contact.identityKey] ??= storage.loadMessages(contact.identityKey)
+function activeNexus(): Nexus | undefined {
+  return S.nexuses.find(n => n.id === S.activeNexusId)
+}
+
+function openChat(nexus: Nexus): void {
+  S.activeNexusId = nexus.id
+  S.conversations[nexus.id] ??= storage.loadMessages(nexus.id)
 
   $('chat-empty').classList.add('hidden')
   $('chat-view').classList.remove('hidden')
-  $('chat-header-name').textContent = contact.nickname.toUpperCase()
-  $('chat-header-key').textContent = contact.identityKey.slice(0, 24) + '…'
+  $('chat-header-name').textContent = nexus.name.toUpperCase()
+  $('chat-header-key').textContent = `${nexus.members?.length ?? '?'} members`
 
   if (S.isMobile) {
     $('sidebar').classList.add('mobile-hidden')
     $('chat-area').classList.add('mobile-active')
   }
 
-  renderContacts()
+  renderNexusList()
   renderMessages(true)
   $('message-input').focus()
 }
 
 function closeChat(): void {
-  S.activeChatKey = null
+  S.activeNexusId = null
   $('chat-empty').classList.remove('hidden')
   $('chat-view').classList.add('hidden')
   if (S.isMobile) {
     $('sidebar').classList.remove('mobile-hidden')
     $('chat-area').classList.remove('mobile-active')
   }
-  renderContacts()
+  renderNexusList()
 }
 
 function renderMessages(scrollToBottom = false): void {
-  if (!S.activeChatKey) return
-  const msgs = S.conversations[S.activeChatKey] ?? []
-  const hasMore = S.hasMoreHistory[S.activeChatKey] !== false
+  if (!S.activeNexusId) return
+  const msgs = S.conversations[S.activeNexusId] ?? []
+  const hasMore = S.hasMoreHistory[S.activeNexusId] !== false
 
   const listOuter = $('message-list')
   const list = $('message-list-inner')
@@ -227,6 +287,7 @@ function renderMessages(scrollToBottom = false): void {
     ${msgs.map(m => `
       <div class="msg-row ${m.isOutgoing ? 'outgoing' : 'incoming'}">
         <div class="msg-bubble">
+          ${!m.isOutgoing ? `<div class="msg-sender">${escHtml(m.senderUsername ?? m.senderKey.slice(0, 8))}</div>` : ''}
           <div class="msg-text">${escHtml(m.text)}</div>
           <div class="msg-time">${formatTime(m.createdAt)}</div>
         </div>
@@ -235,25 +296,23 @@ function renderMessages(scrollToBottom = false): void {
 
   document.getElementById('btn-load-earlier')?.addEventListener('click', loadOlderMessages)
 
-  if (scrollToBottom) {
-    listOuter.scrollTop = listOuter.scrollHeight
-  } else if (wasAtBottom) {
+  if (scrollToBottom || wasAtBottom) {
     listOuter.scrollTop = listOuter.scrollHeight
   } else {
     listOuter.scrollTop = prevScrollTop + (listOuter.scrollHeight - prevScrollHeight)
   }
 }
 
-// ─── Send message ─────────────────────────────────────────────────────────────
+// ─── Send message ───────────────────────────────────────────────────────────
 
 async function sendMessage(): Promise<void> {
-  if (!S.signingPriv || !S.agreementPriv || !S.activeChatKey) return
+  if (!S.signingPriv || !S.agreementPriv || !S.activeNexusId) return
+  const nexus = activeNexus()
+  if (!nexus || !nexus.members?.length) return
+
   const input = $<HTMLTextAreaElement>('message-input')
   const text = input.value.trim()
   if (!text) return
-
-  const contact = S.contacts.find(c => c.identityKey === S.activeChatKey)
-  if (!contact) return
 
   input.value = ''
   autoResizeInput()
@@ -261,20 +320,21 @@ async function sendMessage(): Promise<void> {
   setChatError('')
 
   try {
-    const { ephemeralKey, ciphertext } = crypto.encrypt(S.agreementPriv, contact.encryptionKey, text)
-    const { ephemeralKey: senderEphemeralKey, ciphertext: senderCiphertext } = crypto.encryptForSelf(S.agreementPriv, text)
+    // Encrypt for each member (including self).
+    const envelopes: api.Envelope[] = []
+    for (const member of nexus.members) {
+      if (!member.encryptionKey) continue
+      const { ephemeralKey, ciphertext } = crypto.encrypt(S.agreementPriv, member.encryptionKey, text)
+      envelopes.push({ recipient_key: member.identityKey, ephemeral_key: ephemeralKey, ciphertext })
+    }
 
-    const resp = await api.sendMessage(S.signingPriv, {
-      recipientKey: contact.identityKey,
-      ephemeralKey,
-      ciphertext,
-      senderEphemeralKey,
-      senderCiphertext,
-    })
+    const resp = await api.sendNexusMessage(S.signingPriv, nexus.id, envelopes)
 
-    addToConversation(S.activeChatKey, {
+    addToConversation(nexus.id, {
       id: resp.id,
+      nexusId: nexus.id,
       senderKey: S.myIdentKey,
+      senderUsername: S.username ?? undefined,
       text,
       createdAt: resp.created_at,
       isOutgoing: true,
@@ -286,23 +346,23 @@ async function sendMessage(): Promise<void> {
   }
 }
 
-// ─── Load older messages (pagination) ────────────────────────────────────────
+// ─── Older messages ─────────────────────────────────────────────────────────
 
 async function loadOlderMessages(): Promise<void> {
-  if (!S.signingPriv || !S.activeChatKey) return
-  const beforeId = storage.oldestMessageId(S.activeChatKey)
+  if (!S.signingPriv || !S.activeNexusId) return
+  const beforeId = storage.oldestMessageId(S.activeNexusId)
   const limit = 50
   try {
-    const raw = await api.getHistory(S.signingPriv, { limit, beforeId })
-    processHistoryBatch([...raw].reverse(), true, S.activeChatKey)
-    if (raw.length < limit) S.hasMoreHistory[S.activeChatKey] = false
+    const raw = await api.getNexusHistory(S.signingPriv, S.activeNexusId, { limit, beforeId })
+    processHistoryBatch(S.activeNexusId, [...raw].reverse(), true)
+    if (raw.length < limit) S.hasMoreHistory[S.activeNexusId] = false
     renderMessages()
   } catch (e) {
     console.error('[history] load older failed:', e)
   }
 }
 
-// ─── History sync ─────────────────────────────────────────────────────────────
+// ─── Sync ───────────────────────────────────────────────────────────────────
 
 function scheduleSync(): void {
   doSync()
@@ -310,41 +370,59 @@ function scheduleSync(): void {
 }
 
 async function doSync(): Promise<void> {
-  await syncContacts()
+  await syncNexuses()
   await syncHistory()
   await fetchPending()
 }
 
-async function syncContacts(): Promise<void> {
+async function syncNexuses(): Promise<void> {
   if (!S.signingPriv) return
   try {
-    const serverContacts = await api.getContacts(S.signingPriv)
-    for (const sc of serverContacts) {
-      const encKey = sc.encryption_key ?? ''
-      const existing = S.contacts.find(c => c.identityKey === sc.contact_key)
+    const serverNexuses = await api.getNexuses(S.signingPriv)
+    for (const sn of serverNexuses) {
+      const existing = S.nexuses.find(n => n.id === sn.id)
       if (existing) {
-        if (existing.nickname !== sc.nickname) existing.nickname = sc.nickname
-        if (!existing.encryptionKey && encKey) existing.encryptionKey = encKey
+        existing.name = sn.name
+        existing.role = sn.role
       } else {
-        S.contacts.push({ identityKey: sc.contact_key, encryptionKey: encKey, nickname: sc.nickname })
-        S.conversations[sc.contact_key] ??= storage.loadMessages(sc.contact_key)
+        S.nexuses.push({ id: sn.id, name: sn.name, creatorKey: sn.creator_key, role: sn.role, members: [] })
+        S.conversations[sn.id] ??= storage.loadMessages(sn.id)
       }
     }
-    storage.saveContacts(S.contacts)
-    renderContacts()
+    // Remove nexuses we're no longer a member of.
+    const serverIds = new Set(serverNexuses.map(n => n.id))
+    S.nexuses = S.nexuses.filter(n => serverIds.has(n.id))
+
+    // Refresh members for each nexus.
+    for (const nexus of S.nexuses) {
+      try {
+        const detail = await api.getNexus(S.signingPriv, nexus.id)
+        nexus.members = detail.members.map(m => ({
+          identityKey: m.identity_key,
+          username: m.username,
+          encryptionKey: m.encryption_key,
+          role: m.role,
+        }))
+      } catch { /* skip */ }
+    }
+
+    storage.saveNexuses(S.nexuses)
+    renderNexusList()
   } catch (e) {
-    console.error('[sync] contacts failed:', e)
+    console.error('[sync] nexuses failed:', e)
   }
 }
 
 async function syncHistory(): Promise<void> {
   if (!S.signingPriv) return
-  const since = storage.newestMessageDate()
-  try {
-    const msgs = await api.getHistory(S.signingPriv, { limit: 200, since })
-    processHistoryBatch(msgs)
-  } catch (e) {
-    console.error('[sync] history failed:', e)
+  for (const nexus of S.nexuses) {
+    const since = storage.newestMessageDate(nexus.id)
+    try {
+      const msgs = await api.getNexusHistory(S.signingPriv, nexus.id, { limit: 200, since })
+      processHistoryBatch(nexus.id, msgs)
+    } catch (e) {
+      console.error('[sync] history failed for', nexus.id, e)
+    }
   }
 }
 
@@ -358,41 +436,44 @@ async function fetchPending(): Promise<void> {
   }
 }
 
-function processHistoryBatch(msgs: ServerMessage[], prepend = false, targetKey?: string): void {
+function processHistoryBatch(nexusId: string, msgs: ServerMessage[], prepend = false): void {
   if (!S.agreementPriv) return
   for (const m of msgs) {
     const isOutgoing = m.sender_key === S.myIdentKey
-    const contactKey = isOutgoing ? m.recipient_key : m.sender_key
-    if (!contactKey) continue
-    if (targetKey && contactKey !== targetKey) continue
-
     let text: string
     try {
-      if (isOutgoing) {
-        if (!m.sender_ephemeral_key || !m.sender_ciphertext) continue
-        text = crypto.decrypt(S.agreementPriv, m.sender_ephemeral_key, m.sender_ciphertext)
-      } else {
-        text = crypto.decrypt(S.agreementPriv, m.ephemeral_key, m.ciphertext)
-      }
+      text = crypto.decrypt(S.agreementPriv, m.ephemeral_key, m.ciphertext)
     } catch { continue }
 
-    const stored: StoredMessage = { id: m.id, senderKey: m.sender_key, text, createdAt: m.created_at, isOutgoing }
+    // Look up sender username from nexus members.
+    const nexus = S.nexuses.find(n => n.id === nexusId)
+    const senderMember = nexus?.members?.find(mb => mb.identityKey === m.sender_key)
+
+    const stored: StoredMessage = {
+      id: m.id,
+      nexusId: nexusId,
+      senderKey: m.sender_key,
+      senderUsername: senderMember?.username,
+      text,
+      createdAt: m.created_at,
+      isOutgoing,
+    }
 
     if (prepend) {
-      storage.prependMessages(contactKey, [stored])
-      const arr = S.conversations[contactKey] ?? []
+      storage.prependMessages(nexusId, [stored])
+      const arr = S.conversations[nexusId] ?? []
       if (!arr.some(x => x.id === stored.id)) {
-        S.conversations[contactKey] = [stored, ...arr]
+        S.conversations[nexusId] = [stored, ...arr]
       }
     } else {
-      addToConversation(contactKey, stored)
+      addToConversation(nexusId, stored)
     }
   }
-  renderContacts()
-  if (S.activeChatKey) renderMessages()
+  renderNexusList()
+  if (S.activeNexusId) renderMessages()
 }
 
-// ─── WebSocket ────────────────────────────────────────────────────────────────
+// ─── WebSocket ──────────────────────────────────────────────────────────────
 
 function connectWS(): void {
   if (!S.signingPriv) return
@@ -401,6 +482,7 @@ function connectWS(): void {
 
   S.ws = api.openWebSocket(S.signingPriv, {
     onMessage: frame => handleIncoming(frame),
+    onMemberEvent: event => handleMemberEvent(event),
     onOpen: () => { S.wsStatus = 'connected'; renderWsStatus() },
     onClose: () => {
       S.wsStatus = 'disconnected'
@@ -411,32 +493,12 @@ function connectWS(): void {
   })
 }
 
-function handleIncoming(frame: ServerMessage): void {
-  if (!S.agreementPriv || !S.signingPriv) return
-  const senderKey = frame.sender_key
-  const isEcho = senderKey === S.myIdentKey
+function handleIncoming(frame: ServerMessage & { sender_username?: string }): void {
+  if (!S.agreementPriv) return
 
-  if (isEcho) {
-    // Echo of a message we sent from another device — decrypt with sender copy.
-    if (!frame.recipient_key || !frame.sender_ephemeral_key || !frame.sender_ciphertext) return
-    let text: string
-    try {
-      text = crypto.decrypt(S.agreementPriv, frame.sender_ephemeral_key, frame.sender_ciphertext)
-    } catch (e) {
-      console.error('[ws] echo decrypt failed', e)
-      return
-    }
-    addToConversation(frame.recipient_key, {
-      id: frame.id,
-      senderKey,
-      text,
-      createdAt: frame.created_at,
-      isOutgoing: true,
-    })
-    return
-  }
+  const nexusId = frame.nexus_id
+  const isOutgoing = frame.sender_key === S.myIdentKey
 
-  // Incoming message from another user.
   let text: string
   try {
     text = crypto.decrypt(S.agreementPriv, frame.ephemeral_key, frame.ciphertext)
@@ -445,51 +507,71 @@ function handleIncoming(frame: ServerMessage): void {
     return
   }
 
-  if (!S.contacts.find(c => c.identityKey === senderKey)) {
-    const nick = senderKey.slice(0, 8) + '…'
-    S.contacts.push({ identityKey: senderKey, encryptionKey: '', nickname: nick })
-    storage.saveContacts(S.contacts)
-    S.conversations[senderKey] ??= []
-    api.upsertContact(S.signingPriv, senderKey, nick).catch(() => {})
-    // Fetch encryption key so replies can be encrypted
-    api.getUser(senderKey).then(user => {
-      const c = S.contacts.find(c => c.identityKey === senderKey)
-      if (c) { c.encryptionKey = user.encryption_key; storage.saveContacts(S.contacts) }
-    }).catch(() => {})
-  }
-
-  addToConversation(senderKey, {
+  addToConversation(nexusId, {
     id: frame.id,
-    senderKey,
+    nexusId,
+    senderKey: frame.sender_key,
+    senderUsername: frame.sender_username,
     text,
     createdAt: frame.created_at,
-    isOutgoing: false,
+    isOutgoing,
   })
 
-  if (S.activeChatKey !== senderKey) showNotification(senderKey, text)
+  if (!isOutgoing && S.activeNexusId !== nexusId) {
+    showNotification(nexusId, frame.sender_username ?? frame.sender_key.slice(0, 8), text)
+  }
 }
 
-function showNotification(senderKey: string, text: string): void {
+function handleMemberEvent(event: MemberEvent): void {
+  // Refresh the nexus on membership changes.
+  if (!S.signingPriv) return
+  if (event.type === 'member_kicked' && event.identity_key === S.myIdentKey) {
+    // We got kicked — remove the nexus locally.
+    S.nexuses = S.nexuses.filter(n => n.id !== event.nexus_id)
+    storage.saveNexuses(S.nexuses)
+    if (S.activeNexusId === event.nexus_id) closeChat()
+    renderNexusList()
+    return
+  }
+  // For other events, refresh members.
+  api.getNexus(S.signingPriv, event.nexus_id).then(detail => {
+    const nexus = S.nexuses.find(n => n.id === event.nexus_id)
+    if (nexus) {
+      nexus.members = detail.members.map(m => ({
+        identityKey: m.identity_key,
+        username: m.username,
+        encryptionKey: m.encryption_key,
+        role: m.role,
+      }))
+      storage.saveNexuses(S.nexuses)
+      if (S.activeNexusId === event.nexus_id) {
+        $('chat-header-key').textContent = `${nexus.members.length} members`
+      }
+    }
+  }).catch(() => {})
+}
+
+function showNotification(nexusId: string, senderName: string, text: string): void {
   if (Notification.permission !== 'granted') return
-  const name = S.contacts.find(c => c.identityKey === senderKey)?.nickname ?? senderKey.slice(0, 8)
-  const n = new Notification(name, { body: text, tag: senderKey })
+  const nexus = S.nexuses.find(n => n.id === nexusId)
+  const title = nexus ? nexus.name : 'Nexus Zero'
+  const n = new Notification(title, { body: `${senderName}: ${text}`, tag: nexusId })
   n.onclick = () => {
     window.focus()
-    const c = S.contacts.find(x => x.identityKey === senderKey)
-    if (c) openChat(c)
+    if (nexus) openChat(nexus)
     n.close()
   }
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// ─── Helpers ────────────────────────────────────────────────────────────────
 
-function addToConversation(contactKey: string, msg: StoredMessage): void {
-  const arr = S.conversations[contactKey] ??= []
+function addToConversation(nexusId: string, msg: StoredMessage): void {
+  const arr = S.conversations[nexusId] ??= []
   if (arr.some(m => m.id === msg.id)) return
   arr.push(msg)
-  storage.appendMessage(contactKey, msg)
-  if (S.activeChatKey === contactKey) renderMessages()
-  renderContacts()
+  storage.appendMessage(nexusId, msg)
+  if (S.activeNexusId === nexusId) renderMessages()
+  renderNexusList()
 }
 
 function renderWsStatus(): void {
@@ -526,14 +608,17 @@ function escAttr(s: string): string {
   return s.replace(/"/g, '&quot;')
 }
 
-// ─── Modals ───────────────────────────────────────────────────────────────────
+// ─── Modals ─────────────────────────────────────────────────────────────────
 
-function openModal(id: 'add-contact' | 'settings'): void {
+function openModal(id: AppState['modal']): void {
   S.modal = id
   $('modal-overlay').classList.remove('hidden')
-  $('modal-add-contact').classList.toggle('hidden', id !== 'add-contact')
+  $('modal-create-nexus').classList.toggle('hidden', id !== 'create-nexus')
+  $('modal-join-nexus').classList.toggle('hidden', id !== 'join-nexus')
+  $('modal-nexus-settings').classList.toggle('hidden', id !== 'nexus-settings')
   $('modal-settings').classList.toggle('hidden', id !== 'settings')
   if (id === 'settings') populateSettings()
+  if (id === 'nexus-settings') populateNexusSettings()
 }
 
 function closeModal(): void {
@@ -544,43 +629,127 @@ function closeModal(): void {
 function populateSettings(): void {
   $<HTMLInputElement>('settings-server-url').value = storage.getServerUrl()
   $('settings-identity-key').textContent = S.myIdentKey
+  $('settings-username').textContent = S.username ?? '(not set)'
   if (S.signingPriv && S.agreementPriv) {
     $('settings-backup-code').textContent = crypto.makeBackupCode(S.signingPriv, S.agreementPriv)
   }
 }
 
-async function handleAddContact(): Promise<void> {
-  const key = $<HTMLInputElement>('add-contact-key').value.trim()
-  const nick = $<HTMLInputElement>('add-contact-nick').value.trim()
-  $('add-contact-error').textContent = ''
+async function handleCreateNexus(): Promise<void> {
+  if (!S.signingPriv) return
+  const name = $<HTMLInputElement>('create-nexus-name').value.trim()
+  $('create-nexus-error').textContent = ''
+  if (!name) { $('create-nexus-error').textContent = 'Name is required'; return }
 
-  if (!key) { $('add-contact-error').textContent = 'Identity key is required'; return }
-  if (!nick) { $('add-contact-error').textContent = 'Nickname is required'; return }
-  if (S.contacts.find(c => c.identityKey === key)) {
-    $('add-contact-error').textContent = 'Contact already exists'
-    return
-  }
-
-  let encKey = ''
   try {
-    const user = await api.getUser(key)
-    if (!user) { $('add-contact-error').textContent = 'User not found on server'; return }
-    encKey = user.encryption_key
+    const nexus = await api.createNexus(S.signingPriv, name)
+    // Fetch full detail with members.
+    const detail = await api.getNexus(S.signingPriv, nexus.id)
+    S.nexuses.push({
+      id: detail.id,
+      name: detail.name,
+      creatorKey: detail.creator_key,
+      role: detail.role,
+      members: detail.members.map(m => ({
+        identityKey: m.identity_key,
+        username: m.username,
+        encryptionKey: m.encryption_key,
+        role: m.role,
+      })),
+    })
+    S.conversations[nexus.id] = []
+    storage.saveNexuses(S.nexuses)
+    $<HTMLInputElement>('create-nexus-name').value = ''
+    closeModal()
+    renderNexusList()
   } catch (e) {
-    $('add-contact-error').textContent = (e as Error).message
-    return
+    $('create-nexus-error').textContent = (e as Error).message
   }
+}
 
-  const contact: Contact = { identityKey: key, encryptionKey: encKey, nickname: nick }
-  S.contacts.push(contact)
-  S.conversations[key] = storage.loadMessages(key)
-  storage.saveContacts(S.contacts)
-  if (S.signingPriv) api.upsertContact(S.signingPriv, key, nick).catch(() => {})
+async function handleJoinNexus(): Promise<void> {
+  if (!S.signingPriv) return
+  const code = $<HTMLInputElement>('join-nexus-code').value.trim().toUpperCase()
+  $('join-nexus-error').textContent = ''
+  if (!code) { $('join-nexus-error').textContent = 'Invite code is required'; return }
 
-  $<HTMLInputElement>('add-contact-key').value = ''
-  $<HTMLInputElement>('add-contact-nick').value = ''
-  closeModal()
-  renderContacts()
+  try {
+    const result = await api.joinNexus(S.signingPriv, code)
+    // Fetch full detail.
+    const detail = await api.getNexus(S.signingPriv, result.nexus_id)
+    if (!S.nexuses.find(n => n.id === result.nexus_id)) {
+      S.nexuses.push({
+        id: detail.id,
+        name: detail.name,
+        creatorKey: detail.creator_key,
+        role: 'member',
+        members: detail.members.map(m => ({
+          identityKey: m.identity_key,
+          username: m.username,
+          encryptionKey: m.encryption_key,
+          role: m.role,
+        })),
+      })
+      S.conversations[result.nexus_id] = []
+    }
+    storage.saveNexuses(S.nexuses)
+    $<HTMLInputElement>('join-nexus-code').value = ''
+    closeModal()
+    renderNexusList()
+  } catch (e) {
+    $('join-nexus-error').textContent = (e as Error).message
+  }
+}
+
+function populateNexusSettings(): void {
+  const nexus = activeNexus()
+  if (!nexus) return
+
+  $('nexus-settings-name').textContent = nexus.name
+  const isAdmin = nexus.role === 'admin'
+
+  // Members list
+  const memberList = $('nexus-settings-members')
+  memberList.innerHTML = (nexus.members ?? []).map(m => {
+    const isSelf = m.identityKey === S.myIdentKey
+    const kickBtn = isAdmin && !isSelf
+      ? `<button class="btn-kick" data-key="${escAttr(m.identityKey)}">kick</button>`
+      : ''
+    return `<div class="member-row">
+      <span class="member-name">${escHtml(m.username ?? m.identityKey.slice(0, 8))}${m.role === 'admin' ? ' (admin)' : ''}${isSelf ? ' (you)' : ''}</span>
+      ${kickBtn}
+    </div>`
+  }).join('')
+
+  // Kick handlers
+  memberList.querySelectorAll('.btn-kick').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      if (!S.signingPriv || !nexus) return
+      const key = (btn as HTMLElement).dataset['key']!
+      try {
+        await api.kickMember(S.signingPriv, nexus.id, key)
+        nexus.members = nexus.members.filter(m => m.identityKey !== key)
+        storage.saveNexuses(S.nexuses)
+        populateNexusSettings()
+      } catch (e) {
+        console.error('kick failed:', e)
+      }
+    })
+  })
+
+  // Invite section (admin only)
+  $('nexus-invite-section').classList.toggle('hidden', !isAdmin)
+  $('nexus-invite-code').textContent = ''
+}
+
+async function handleGenerateInvite(): Promise<void> {
+  if (!S.signingPriv || !S.activeNexusId) return
+  try {
+    const invite = await api.createInvite(S.signingPriv, S.activeNexusId)
+    $('nexus-invite-code').textContent = invite.code
+  } catch (e) {
+    console.error('create invite failed:', e)
+  }
 }
 
 function handleSaveSettings(): void {
@@ -590,38 +759,52 @@ function handleSaveSettings(): void {
   connectWS()
 }
 
-// ─── Event bindings ───────────────────────────────────────────────────────────
+// ─── Event bindings ─────────────────────────────────────────────────────────
 
 function bindEvents(): void {
+  // Onboarding
   $('btn-generate').addEventListener('click', () => { void handleGenerate() })
   $('btn-restore').addEventListener('click', () => { setObError(''); showObPanel('ob-restore') })
   $('btn-backup-done').addEventListener('click', handleBackupDone)
   $('btn-restore-submit').addEventListener('click', () => { void handleRestore() })
   $<HTMLInputElement>('restore-input').addEventListener('keydown', e => { if (e.key === 'Enter') void handleRestore() })
 
-  $('btn-add-contact').addEventListener('click', () => openModal('add-contact'))
-  $('btn-settings').addEventListener('click', () => openModal('settings'))
+  // Username
+  $('btn-set-username').addEventListener('click', () => { void handleSetUsername() })
+  $<HTMLInputElement>('username-input').addEventListener('keydown', e => { if (e.key === 'Enter') void handleSetUsername() })
 
-  $('contact-list').addEventListener('click', e => {
+  // Nexus list clicks
+  $('nexus-list').addEventListener('click', e => {
     const item = (e.target as Element).closest<HTMLElement>('.contact-item')
-    if (!item?.dataset['key']) return
-    const contact = S.contacts.find(c => c.identityKey === item.dataset['key'])
-    if (contact) openChat(contact)
+    if (!item?.dataset['nexusId']) return
+    const nexus = S.nexuses.find(n => n.id === item.dataset['nexusId'])
+    if (nexus) openChat(nexus)
   })
 
+  // Toolbar buttons
+  $('btn-create-nexus').addEventListener('click', () => openModal('create-nexus'))
+  $('btn-join-nexus').addEventListener('click', () => openModal('join-nexus'))
+  $('btn-settings').addEventListener('click', () => openModal('settings'))
   $('btn-back').addEventListener('click', closeChat)
+  $('btn-nexus-settings').addEventListener('click', () => openModal('nexus-settings'))
 
+  // Chat input
   $<HTMLTextAreaElement>('message-input').addEventListener('input', () => { autoResizeInput(); updateSendButton() })
   $<HTMLTextAreaElement>('message-input').addEventListener('keydown', e => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void sendMessage() }
   })
   $('btn-send').addEventListener('click', () => { void sendMessage() })
 
+  // Modals
   $('modal-overlay').addEventListener('click', e => { if (e.target === $('modal-overlay')) closeModal() })
-  $('btn-add-cancel').addEventListener('click', closeModal)
-  $('btn-add-submit').addEventListener('click', () => { void handleAddContact() })
-  $<HTMLInputElement>('add-contact-key').addEventListener('keydown', e => { if (e.key === 'Enter') $('add-contact-nick').focus() })
-  $<HTMLInputElement>('add-contact-nick').addEventListener('keydown', e => { if (e.key === 'Enter') void handleAddContact() })
+  $('btn-create-nexus-submit').addEventListener('click', () => { void handleCreateNexus() })
+  $('btn-create-nexus-cancel').addEventListener('click', closeModal)
+  $<HTMLInputElement>('create-nexus-name').addEventListener('keydown', e => { if (e.key === 'Enter') void handleCreateNexus() })
+  $('btn-join-nexus-submit').addEventListener('click', () => { void handleJoinNexus() })
+  $('btn-join-nexus-cancel').addEventListener('click', closeModal)
+  $<HTMLInputElement>('join-nexus-code').addEventListener('keydown', e => { if (e.key === 'Enter') void handleJoinNexus() })
+  $('btn-generate-invite').addEventListener('click', () => { void handleGenerateInvite() })
+  $('btn-nexus-settings-close').addEventListener('click', closeModal)
   $('btn-settings-close').addEventListener('click', closeModal)
   $('btn-settings-save').addEventListener('click', handleSaveSettings)
 

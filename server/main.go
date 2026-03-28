@@ -16,7 +16,6 @@ import (
 func main() {
 	cfg := Load()
 
-	// Connect to PostgreSQL.
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
@@ -38,7 +37,6 @@ func main() {
 
 	r := chi.NewRouter()
 
-	// Standard middleware.
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Logger)
@@ -52,24 +50,48 @@ func main() {
 	// Authenticated routes.
 	r.Group(func(r chi.Router) {
 		r.Use(authMiddleware)
-		r.Post("/v1/messages", srv.HandleSendMessage)
+
+		// Username
+		r.Put("/v1/users/me/username", srv.HandleSetUsername)
+
+		// Nexus CRUD
+		r.Post("/v1/nexuses", srv.HandleCreateNexus)
+		r.Get("/v1/nexuses", srv.HandleGetNexuses)
+		r.Get("/v1/nexuses/{id}", srv.HandleGetNexus)
+		r.Put("/v1/nexuses/{id}", srv.HandleUpdateNexus)
+		r.Delete("/v1/nexuses/{id}", srv.HandleDeleteNexus)
+
+		// Members
+		r.Get("/v1/nexuses/{id}/members", srv.HandleGetMembers)
+		r.Delete("/v1/nexuses/{id}/members/{identity_key}", srv.HandleKickMember)
+		r.Post("/v1/nexuses/{id}/leave", srv.HandleLeaveNexus)
+
+		// Invites
+		r.Post("/v1/nexuses/{id}/invites", srv.HandleCreateInvite)
+		r.Get("/v1/nexuses/{id}/invites", srv.HandleGetInvites)
+		r.Delete("/v1/nexuses/{id}/invites/{invite_id}", srv.HandleRevokeInvite)
+
+		// Join via invite code
+		r.Post("/v1/join", srv.HandleJoinNexus)
+
+		// Nexus messages
+		r.Post("/v1/nexuses/{id}/messages", srv.HandleSendNexusMessage)
+		r.Get("/v1/nexuses/{id}/messages", srv.HandleGetNexusHistory)
+
+		// Pending messages (cross-nexus)
 		r.Get("/v1/messages/pending", srv.HandleGetPending)
-		r.Get("/v1/messages/history", srv.HandleGetHistory)
-		r.Get("/v1/contacts", srv.HandleGetContacts)
-		r.Put("/v1/contacts/{contact_key}", srv.HandleUpsertContact)
-		r.Delete("/v1/contacts/{contact_key}", srv.HandleDeleteContact)
+
+		// Device token
 		r.Put("/v1/device-token", srv.HandleUpsertDeviceToken)
 	})
 
-	// WebSocket endpoint (auth via query param).
+	// WebSocket (auth via query param).
 	r.Get("/v1/ws", srv.ServeWS)
 
 	// Serve web app static files if the dist directory exists.
 	if _, err := os.Stat("web/dist"); err == nil {
 		fs := http.FileServer(http.Dir("web/dist"))
 		r.Get("/*", func(w http.ResponseWriter, r *http.Request) {
-			// Serve index.html for any path that doesn't match a real file
-			// (SPA client-side routing).
 			if _, err := os.Stat("web/dist" + r.URL.Path); os.IsNotExist(err) {
 				http.ServeFile(w, r, "web/dist/index.html")
 				return
@@ -90,7 +112,7 @@ func main() {
 func corsMiddleware(next http.Handler) http.Handler {
 	allowed := map[string]bool{
 		"https://nexus.semenov.ai": true,
-		"http://localhost:5173":    true, // dev
+		"http://localhost:5173":    true,
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")

@@ -5,30 +5,66 @@ import Foundation
 struct UserResponse: Codable {
     let identityKey: String
     let encryptionKey: String
+    let username: String?
     let createdAt: Date
 }
 
-struct ContactResponse: Codable {
-    let contactKey: String
-    let nickname: String
-    let encryptionKey: String?
-    let updatedAt: Date
+struct NexusResponse: Codable {
+    let id: String
+    let name: String
+    let creatorKey: String
+    let createdAt: Date
+    let role: String
+}
+
+struct NexusDetailResponse: Codable {
+    let id: String
+    let name: String
+    let creatorKey: String
+    let createdAt: Date
+    let role: String
+    let members: [NexusMemberResponse]
+}
+
+struct NexusMemberResponse: Codable {
+    let identityKey: String
+    let username: String?
+    let encryptionKey: String
+    let role: String
+    let joinedAt: Date
+}
+
+struct InviteCodeResponse: Codable {
+    let id: String
+    let nexusId: String
+    let code: String
+    let createdBy: String
+    let maxUses: Int?
+    let useCount: Int
+    let revoked: Bool
+    let createdAt: Date
+    let expiresAt: Date?
 }
 
 struct MessageResponse: Codable {
     let id: String
+    let nexusId: String
     let senderKey: String
-    let recipientKey: String?
+    let recipientKey: String
     let ephemeralKey: String
     let ciphertext: String
-    let senderEphemeralKey: String?
-    let senderCiphertext: String?
+    let senderUsername: String?
     let createdAt: Date
 }
 
 struct SendMessageResponse: Codable {
     let id: String
     let createdAt: Date
+}
+
+struct JoinResponse: Codable {
+    let nexusId: String
+    let name: String
 }
 
 // MARK: - Errors
@@ -71,17 +107,12 @@ final class APIClient {
 
         self.decoder = JSONDecoder()
         self.decoder.keyDecodingStrategy = .convertFromSnakeCase
-        // The server emits timestamps with fractional seconds and a timezone
-        // offset (e.g. "2026-03-25T03:06:40.714976+03:00").  Swift's plain
-        // .iso8601 strategy does not handle fractional seconds, so we use a
-        // custom formatter that does.
         let iso = ISO8601DateFormatter()
         iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         self.decoder.dateDecodingStrategy = .custom { decoder in
             let container = try decoder.singleValueContainer()
             let str = try container.decode(String.self)
             if let date = iso.date(from: str) { return date }
-            // Fallback: no fractional seconds
             iso.formatOptions = [.withInternetDateTime]
             defer { iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds] }
             if let date = iso.date(from: str) { return date }
@@ -94,9 +125,8 @@ final class APIClient {
         self.encoder.dateEncodingStrategy = .iso8601
     }
 
-    // MARK: - Endpoints
+    // MARK: - Users
 
-    /// Registers the current device with the server.
     func registerUser() async throws {
         let body: [String: String] = [
             "identity_key": keyManager.identityKeyString,
@@ -109,13 +139,11 @@ final class APIClient {
             throw APIError.networkError(URLError(.badServerResponse))
         }
         let code = httpResponse.statusCode
-        // 201 = created, 409 = already registered (idempotent — treat as success)
         guard code == 201 || code == 409 else {
             throw APIError.httpError(code, "registration failed")
         }
     }
 
-    /// Fetches the public profile of a user by their identity key.
     func getUser(identityKey: String) async throws -> UserResponse {
         let encoded = identityKey.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? identityKey
         let req = try makeRequest(path: "/v1/users/\(encoded)", method: "GET", authenticated: false)
@@ -124,39 +152,137 @@ final class APIClient {
         return try decode(UserResponse.self, from: data)
     }
 
-    /// Sends an encrypted message to a recipient, including a sender copy for history.
-    /// Returns the server-assigned message ID and timestamp.
-    func sendMessage(recipientKey: String, ephemeralKey: String, ciphertext: String,
-                     senderEphemeralKey: String, senderCiphertext: String) async throws -> SendMessageResponse {
-        let body: [String: String] = [
-            "recipient_key": recipientKey,
-            "ephemeral_key": ephemeralKey,
-            "ciphertext": ciphertext,
-            "sender_ephemeral_key": senderEphemeralKey,
-            "sender_ciphertext": senderCiphertext,
-        ]
-        var req = try makeRequest(path: "/v1/messages", method: "POST", authenticated: true)
+    func setUsername(_ username: String) async throws {
+        var req = try makeRequest(path: "/v1/users/me/username", method: "PUT", authenticated: true)
+        req.httpBody = try JSONSerialization.data(withJSONObject: ["username": username])
+        let (data, response) = try await perform(req)
+        try assertSuccess(response, data: data, expected: 204)
+    }
+
+    // MARK: - Nexuses
+
+    func createNexus(name: String) async throws -> NexusResponse {
+        var req = try makeRequest(path: "/v1/nexuses", method: "POST", authenticated: true)
+        req.httpBody = try JSONSerialization.data(withJSONObject: ["name": name])
+        let (data, response) = try await perform(req)
+        try assertSuccess(response, data: data, expected: 201)
+        return try decode(NexusResponse.self, from: data)
+    }
+
+    func getNexuses() async throws -> [NexusResponse] {
+        let req = try makeRequest(path: "/v1/nexuses", method: "GET", authenticated: true)
+        let (data, response) = try await perform(req)
+        try assertSuccess(response, data: data)
+        return try decode([NexusResponse].self, from: data)
+    }
+
+    func getNexus(id: String) async throws -> NexusDetailResponse {
+        let req = try makeRequest(path: "/v1/nexuses/\(id)", method: "GET", authenticated: true)
+        let (data, response) = try await perform(req)
+        try assertSuccess(response, data: data)
+        return try decode(NexusDetailResponse.self, from: data)
+    }
+
+    func updateNexus(id: String, name: String) async throws {
+        var req = try makeRequest(path: "/v1/nexuses/\(id)", method: "PUT", authenticated: true)
+        req.httpBody = try JSONSerialization.data(withJSONObject: ["name": name])
+        let (data, response) = try await perform(req)
+        try assertSuccess(response, data: data, expected: 204)
+    }
+
+    func deleteNexus(id: String) async throws {
+        let req = try makeRequest(path: "/v1/nexuses/\(id)", method: "DELETE", authenticated: true)
+        let (data, response) = try await perform(req)
+        try assertSuccess(response, data: data, expected: 204)
+    }
+
+    // MARK: - Members
+
+    func getMembers(nexusId: String) async throws -> [NexusMemberResponse] {
+        let req = try makeRequest(path: "/v1/nexuses/\(nexusId)/members", method: "GET", authenticated: true)
+        let (data, response) = try await perform(req)
+        try assertSuccess(response, data: data)
+        return try decode([NexusMemberResponse].self, from: data)
+    }
+
+    func kickMember(nexusId: String, identityKey: String) async throws {
+        let encoded = identityKey.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? identityKey
+        let req = try makeRequest(path: "/v1/nexuses/\(nexusId)/members/\(encoded)", method: "DELETE", authenticated: true)
+        let (data, response) = try await perform(req)
+        try assertSuccess(response, data: data, expected: 204)
+    }
+
+    func leaveNexus(id: String) async throws {
+        let req = try makeRequest(path: "/v1/nexuses/\(id)/leave", method: "POST", authenticated: true)
+        let (data, response) = try await perform(req)
+        try assertSuccess(response, data: data, expected: 204)
+    }
+
+    // MARK: - Invites
+
+    func createInvite(nexusId: String, maxUses: Int? = nil, expiresInHours: Int? = nil) async throws -> InviteCodeResponse {
+        var body: [String: Any] = [:]
+        if let m = maxUses { body["max_uses"] = m }
+        if let e = expiresInHours { body["expires_in_hours"] = e }
+        var req = try makeRequest(path: "/v1/nexuses/\(nexusId)/invites", method: "POST", authenticated: true)
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let (data, response) = try await perform(req)
+        try assertSuccess(response, data: data, expected: 201)
+        return try decode(InviteCodeResponse.self, from: data)
+    }
+
+    func getInvites(nexusId: String) async throws -> [InviteCodeResponse] {
+        let req = try makeRequest(path: "/v1/nexuses/\(nexusId)/invites", method: "GET", authenticated: true)
+        let (data, response) = try await perform(req)
+        try assertSuccess(response, data: data)
+        return try decode([InviteCodeResponse].self, from: data)
+    }
+
+    func revokeInvite(nexusId: String, inviteId: String) async throws {
+        let req = try makeRequest(path: "/v1/nexuses/\(nexusId)/invites/\(inviteId)", method: "DELETE", authenticated: true)
+        let (data, response) = try await perform(req)
+        try assertSuccess(response, data: data, expected: 204)
+    }
+
+    // MARK: - Join
+
+    func joinNexus(code: String) async throws -> JoinResponse {
+        var req = try makeRequest(path: "/v1/join", method: "POST", authenticated: true)
+        req.httpBody = try JSONSerialization.data(withJSONObject: ["code": code])
+        let (data, response) = try await perform(req)
+        try assertSuccess(response, data: data)
+        return try decode(JoinResponse.self, from: data)
+    }
+
+    // MARK: - Messages
+
+    struct Envelope: Codable {
+        let recipientKey: String
+        let ephemeralKey: String
+        let ciphertext: String
+    }
+
+    func sendNexusMessage(nexusId: String, envelopes: [Envelope]) async throws -> SendMessageResponse {
+        let body: [[String: String]] = envelopes.map {
+            ["recipient_key": $0.recipientKey, "ephemeral_key": $0.ephemeralKey, "ciphertext": $0.ciphertext]
+        }
+        var req = try makeRequest(path: "/v1/nexuses/\(nexusId)/messages", method: "POST", authenticated: true)
+        req.httpBody = try JSONSerialization.data(withJSONObject: ["envelopes": body])
         let (data, response) = try await perform(req)
         try assertSuccess(response, data: data, expected: 201)
         return try decode(SendMessageResponse.self, from: data)
     }
 
-    /// Fetches paginated message history (sent + received) for the authenticated user.
-    /// - Parameters:
-    ///   - limit: Maximum number of messages to return (default 100, server max 500).
-    ///   - since: If set, only messages with created_at > since are returned (incremental sync).
-    ///   - beforeID: If set, returns up to `limit` messages older than this message ID.
-    func getHistory(limit: Int = 100, since: Date? = nil, beforeID: String? = nil) async throws -> [MessageResponse] {
-        var components = URLComponents(string: baseURL + "/v1/messages/history")!
+    func getNexusHistory(nexusId: String, limit: Int = 100, since: Date? = nil, beforeId: String? = nil) async throws -> [MessageResponse] {
+        var components = URLComponents(string: baseURL + "/v1/nexuses/\(nexusId)/messages")!
         var queryItems: [URLQueryItem] = [URLQueryItem(name: "limit", value: String(limit))]
         if let since = since {
             let iso = ISO8601DateFormatter()
             iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
             queryItems.append(URLQueryItem(name: "since", value: iso.string(from: since)))
         }
-        if let beforeID = beforeID {
-            queryItems.append(URLQueryItem(name: "before_id", value: beforeID))
+        if let beforeId = beforeId {
+            queryItems.append(URLQueryItem(name: "before_id", value: beforeId))
         }
         components.queryItems = queryItems
         guard let url = components.url else { throw APIError.invalidURL }
@@ -169,46 +295,20 @@ final class APIClient {
         return try decode([MessageResponse].self, from: data)
     }
 
-    /// Fetches all server-side contacts for the authenticated user.
-    func getContacts() async throws -> [ContactResponse] {
-        let req = try makeRequest(path: "/v1/contacts", method: "GET", authenticated: true)
-        let (data, response) = try await perform(req)
-        try assertSuccess(response, data: data)
-        return try decode([ContactResponse].self, from: data)
-    }
-
-    /// Creates or updates a contact on the server.
-    func upsertContact(key: String, nickname: String) async throws {
-        let encoded = key.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? key
-        var req = try makeRequest(path: "/v1/contacts/\(encoded)", method: "PUT", authenticated: true)
-        req.httpBody = try JSONSerialization.data(withJSONObject: ["nickname": nickname])
-        let (data, response) = try await perform(req)
-        try assertSuccess(response, data: data, expected: 204)
-    }
-
-    /// Deletes a contact from the server.
-    func deleteContact(key: String) async throws {
-        let encoded = key.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? key
-        let req = try makeRequest(path: "/v1/contacts/\(encoded)", method: "DELETE", authenticated: true)
-        let (data, response) = try await perform(req)
-        try assertSuccess(response, data: data, expected: 204)
-    }
-
-    /// Registers an APNs device token with the server.
-    func registerDeviceToken(_ token: String) async throws {
-        var req = try makeRequest(path: "/v1/device-token", method: "PUT", authenticated: true)
-        req.httpBody = try JSONSerialization.data(withJSONObject: ["token": token])
-        let (data, response) = try await perform(req)
-        try assertSuccess(response, data: data, expected: 204)
-    }
-
-    /// Retrieves (and marks as delivered) all pending messages for the
-    /// authenticated user.
     func getPendingMessages() async throws -> [MessageResponse] {
         let req = try makeRequest(path: "/v1/messages/pending", method: "GET", authenticated: true)
         let (data, response) = try await perform(req)
         try assertSuccess(response, data: data)
         return try decode([MessageResponse].self, from: data)
+    }
+
+    // MARK: - Device Token
+
+    func registerDeviceToken(_ token: String) async throws {
+        var req = try makeRequest(path: "/v1/device-token", method: "PUT", authenticated: true)
+        req.httpBody = try JSONSerialization.data(withJSONObject: ["token": token])
+        let (data, response) = try await perform(req)
+        try assertSuccess(response, data: data, expected: 204)
     }
 
     // MARK: - Private helpers
@@ -238,7 +338,6 @@ final class APIClient {
         }
         let code = httpResponse.statusCode
         if code == expected { return }
-        // Attempt to extract the server's error message.
         if let errBody = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
            let msg = errBody["error"] as? String {
             throw APIError.httpError(code, msg)

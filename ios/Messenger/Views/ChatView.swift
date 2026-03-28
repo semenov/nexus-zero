@@ -2,15 +2,16 @@ import SwiftUI
 
 struct ChatView: View {
 
-    let contact: Contact
+    let nexus: Nexus
 
     @EnvironmentObject private var appState: AppState
     @State private var inputText: String = ""
     @State private var isSending = false
     @State private var errorMessage: String? = nil
+    @State private var showNexusSettings = false
 
     private var messages: [StoredMessage] {
-        appState.conversations[contact.identityKey] ?? []
+        appState.conversations[nexus.id] ?? []
     }
 
     var body: some View {
@@ -32,19 +33,30 @@ struct ChatView: View {
             }
             ToolbarItem(placement: .principal) {
                 VStack(spacing: 1) {
-                    Text(contact.nickname.uppercased())
+                    Text(nexus.name.uppercased())
                         .font(Theme.mono(14, weight: .bold))
                         .foregroundStyle(Theme.neonGreen)
                         .neonGlow()
-                    Text(String(contact.identityKey.prefix(16)) + "…")
+                    Text("\(nexus.members.count) members")
                         .font(Theme.mono(9))
                         .foregroundStyle(Theme.textDim)
                 }
             }
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button {
+                    showNexusSettings = true
+                } label: {
+                    Image(systemName: "gearshape")
+                        .foregroundStyle(Theme.textSecondary)
+                }
+            }
+        }
+        .sheet(isPresented: $showNexusSettings) {
+            NexusSettingsView(nexus: nexus)
         }
         .preferredColorScheme(.dark)
-        .onAppear  { appState.activeChatKey = contact.identityKey }
-        .onDisappear { appState.activeChatKey = nil }
+        .onAppear  { appState.activeNexusId = nexus.id }
+        .onDisappear { appState.activeNexusId = nil }
     }
 
     // MARK: - Messages scroll view
@@ -55,16 +67,16 @@ struct ChatView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(spacing: 6) {
-                        if appState.hasMoreHistory[contact.identityKey] ?? true {
+                        if appState.hasMoreHistory[nexus.id] ?? true {
                             Button("Load earlier messages") {
-                                Task { await appState.loadOlderMessages(contact: contact) }
+                                Task { await appState.loadOlderMessages(nexusId: nexus.id) }
                             }
                             .font(Theme.mono(11))
                             .foregroundStyle(Theme.textDim)
                             .padding(.vertical, 8)
                         }
                         ForEach(messages) { message in
-                            MessageBubble(message: message).id(message.id)
+                            MessageBubble(message: message, myKey: appState.keyManager.identityKeyString).id(message.id)
                         }
                     }
                     .padding(.horizontal, 12)
@@ -77,16 +89,16 @@ struct ChatView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(spacing: 6) {
-                        if appState.hasMoreHistory[contact.identityKey] ?? true {
+                        if appState.hasMoreHistory[nexus.id] ?? true {
                             Button("Load earlier messages") {
-                                Task { await appState.loadOlderMessages(contact: contact) }
+                                Task { await appState.loadOlderMessages(nexusId: nexus.id) }
                             }
                             .font(Theme.mono(11))
                             .foregroundStyle(Theme.textDim)
                             .padding(.vertical, 8)
                         }
                         ForEach(messages) { message in
-                            MessageBubble(message: message).id(message.id)
+                            MessageBubble(message: message, myKey: appState.keyManager.identityKeyString).id(message.id)
                         }
                     }
                     .padding(.horizontal, 12)
@@ -165,7 +177,7 @@ struct ChatView: View {
         errorMessage = nil
         inputText = ""
         do {
-            try await appState.sendMessage(to: contact, text: text)
+            try await appState.sendMessage(nexusId: nexus.id, text: text)
         } catch {
             errorMessage = error.localizedDescription
             inputText = text
@@ -202,12 +214,19 @@ private struct BackButton: View {
 
 private struct MessageBubble: View {
     let message: StoredMessage
+    let myKey: String
 
     var body: some View {
         HStack(alignment: .bottom, spacing: 0) {
             if message.isOutgoing { Spacer(minLength: 50) }
 
             VStack(alignment: message.isOutgoing ? .trailing : .leading, spacing: 3) {
+                if !message.isOutgoing {
+                    Text(message.senderUsername ?? String(message.senderKey.prefix(8)))
+                        .font(Theme.mono(10, weight: .bold))
+                        .foregroundStyle(senderColor(for: message.senderKey))
+                }
+
                 Text(message.text)
                     .font(Theme.mono(13))
                     .foregroundStyle(message.isOutgoing ? Theme.background : Theme.textPrimary)
@@ -229,5 +248,10 @@ private struct MessageBubble: View {
 
             if !message.isOutgoing { Spacer(minLength: 50) }
         }
+    }
+
+    private func senderColor(for key: String) -> Color {
+        let colors: [Color] = [Theme.neonCyan, Theme.neonMagenta, Theme.neonYellow, Theme.neonGreen]
+        return colors[abs(key.hashValue) % colors.count]
     }
 }

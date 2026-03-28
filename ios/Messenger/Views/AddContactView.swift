@@ -1,223 +1,423 @@
 import SwiftUI
-import AVFoundation
 
-struct AddContactView: View {
+// MARK: - CreateNexusView
+
+struct CreateNexusView: View {
 
     @EnvironmentObject private var appState: AppState
     @Environment(\.dismiss) private var dismiss
 
-    // Step machine
-    @State private var step: Step = .input
-    @State private var pastedKey: String = ""
-    @State private var nickname: String = ""
+    @State private var name: String = ""
     @State private var isLoading = false
     @State private var errorMessage: String? = nil
-    @State private var showScanner = false
-
-    private enum Step { case input, nickname, done }
 
     var body: some View {
         NavigationStack {
-            Form {
-                switch step {
-                case .input:
-                    inputSection
-                case .nickname:
-                    nicknameSection
-                case .done:
-                    EmptyView()
-                }
+            ZStack {
+                Theme.background.ignoresSafeArea()
 
-                if let err = errorMessage {
-                    Section {
+                VStack(spacing: 20) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("> NEXUS NAME")
+                            .font(Theme.mono(11, weight: .bold))
+                            .foregroundStyle(Theme.textSecondary)
+
+                        TextField("", text: $name)
+                            .font(Theme.mono(14))
+                            .foregroundStyle(Theme.textPrimary)
+                            .tint(Theme.neonGreen)
+                            .padding(12)
+                            .background(Theme.surface)
+                            .overlay(Rectangle().strokeBorder(Theme.border, lineWidth: 1))
+                            .autocorrectionDisabled()
+                    }
+                    .padding(.horizontal)
+
+                    if let err = errorMessage {
                         Text(err)
-                            .foregroundStyle(.red)
-                            .font(.caption)
+                            .font(Theme.mono(10))
+                            .foregroundStyle(Theme.neonMagenta)
+                            .padding(.horizontal)
                     }
-                }
-            }
-            .navigationTitle("Add Contact")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                }
-            }
-            .sheet(isPresented: $showScanner) {
-                QRScannerSheet { scanned in
-                    pastedKey = scanned
-                    showScanner = false
-                }
-            }
-        }
-    }
 
-    // MARK: - Sections
-
-    private var inputSection: some View {
-        Group {
-            Section(header: Text("Public Key")) {
-                TextField("Paste identity key…", text: $pastedKey, axis: .vertical)
-                    .font(.system(.body, design: .monospaced))
-                    .autocorrectionDisabled()
-                    .textInputAutocapitalization(.never)
-                    .lineLimit(3...6)
-
-                Button {
-                    showScanner = true
-                } label: {
-                    Label("Scan QR Code", systemImage: "qrcode.viewfinder")
-                }
-            }
-
-            Section {
-                Button {
-                    Task { await lookupUser() }
-                } label: {
-                    if isLoading {
-                        ProgressView()
-                    } else {
-                        Text("Next")
+                    Button {
+                        Task { await create() }
+                    } label: {
+                        Text(isLoading ? "CREATING…" : "[ CREATE NEXUS ]")
+                            .font(Theme.mono(14, weight: .bold))
+                            .tracking(2)
+                            .foregroundStyle(canCreate ? Theme.background : Theme.textDim)
                             .frame(maxWidth: .infinity)
+                            .padding(.vertical, 14)
+                            .background(canCreate ? Theme.neonGreen : Theme.surface)
+                    }
+                    .neonGlow(canCreate ? Theme.neonGreen : .clear, radius: 8)
+                    .disabled(!canCreate)
+                    .padding(.horizontal)
+
+                    Spacer()
+                }
+                .padding(.top, 24)
+            }
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(Theme.surface, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
+            .toolbarColorScheme(.dark, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Text("// CREATE NEXUS")
+                        .font(Theme.mono(16, weight: .bold))
+                        .foregroundStyle(Theme.neonGreen)
+                        .neonGlow()
+                }
+                ToolbarItem(placement: .cancellationAction) {
+                    Button { dismiss() } label: {
+                        Text("✕")
+                            .font(Theme.mono(20, weight: .bold))
+                            .foregroundStyle(Theme.textSecondary)
                     }
                 }
-                .disabled(pastedKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isLoading)
             }
+            .preferredColorScheme(.dark)
         }
     }
 
-    private var nicknameSection: some View {
-        Group {
-            Section(header: Text("Set a Nickname")) {
-                TextField("Nickname", text: $nickname)
-                    .autocorrectionDisabled()
-            }
-
-            Section {
-                Button {
-                    saveContact()
-                } label: {
-                    Text("Add Contact")
-                        .frame(maxWidth: .infinity)
-                }
-                .disabled(nickname.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }
-        }
+    private var canCreate: Bool {
+        !name.trimmingCharacters(in: .whitespaces).isEmpty && !isLoading
     }
 
-    // MARK: - Logic
-
-    /// Resolves the identity key via the server and advances to the nickname step.
-    @State private var resolvedEncryptionKey: String = ""
-
-    private func lookupUser() async {
-        let key = pastedKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !key.isEmpty else { return }
+    private func create() async {
         isLoading = true
         errorMessage = nil
         do {
-            let user = try await appState.apiClient.getUser(identityKey: key)
-            resolvedEncryptionKey = user.encryptionKey
-            step = .nickname
+            _ = try await appState.createNexus(name: name.trimmingCharacters(in: .whitespaces))
+            dismiss()
         } catch {
             errorMessage = error.localizedDescription
         }
         isLoading = false
     }
-
-    private func saveContact() {
-        let key = pastedKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        let nick = nickname.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !key.isEmpty, !nick.isEmpty else { return }
-        let contact = Contact(identityKey: key, encryptionKey: resolvedEncryptionKey, nickname: nick)
-        appState.addContact(contact)
-        dismiss()
-    }
 }
 
-// MARK: - QR Scanner
+// MARK: - JoinNexusView
 
-struct QRScannerSheet: View {
-    let onScan: (String) -> Void
+struct JoinNexusView: View {
+
+    @EnvironmentObject private var appState: AppState
     @Environment(\.dismiss) private var dismiss
+
+    @State private var code: String = ""
+    @State private var isLoading = false
+    @State private var errorMessage: String? = nil
 
     var body: some View {
         NavigationStack {
-            QRScannerView(onScan: onScan)
-                .ignoresSafeArea()
-                .navigationTitle("Scan QR Code")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("Cancel") { dismiss() }
+            ZStack {
+                Theme.background.ignoresSafeArea()
+
+                VStack(spacing: 20) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("> PASTE INVITE CODE")
+                            .font(Theme.mono(11, weight: .bold))
+                            .foregroundStyle(Theme.textSecondary)
+
+                        TextField("", text: $code)
+                            .font(Theme.mono(18, weight: .bold))
+                            .foregroundStyle(Theme.neonCyan)
+                            .tint(Theme.neonCyan)
+                            .multilineTextAlignment(.center)
+                            .padding(12)
+                            .background(Theme.surface)
+                            .overlay(Rectangle().strokeBorder(Theme.neonCyan.opacity(0.5), lineWidth: 1))
+                            .autocorrectionDisabled()
+                            .textInputAutocapitalization(.characters)
+                    }
+                    .padding(.horizontal)
+
+                    if let err = errorMessage {
+                        Text(err)
+                            .font(Theme.mono(10))
+                            .foregroundStyle(Theme.neonMagenta)
+                            .padding(.horizontal)
+                    }
+
+                    Button {
+                        Task { await join() }
+                    } label: {
+                        Text(isLoading ? "JOINING…" : "[ JOIN NEXUS ]")
+                            .font(Theme.mono(14, weight: .bold))
+                            .tracking(2)
+                            .foregroundStyle(canJoin ? Theme.background : Theme.textDim)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 14)
+                            .background(canJoin ? Theme.neonCyan : Theme.surface)
+                    }
+                    .neonGlow(canJoin ? Theme.neonCyan : .clear, radius: 8)
+                    .disabled(!canJoin)
+                    .padding(.horizontal)
+
+                    Spacer()
+                }
+                .padding(.top, 24)
+            }
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(Theme.surface, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
+            .toolbarColorScheme(.dark, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Text("// JOIN NEXUS")
+                        .font(Theme.mono(16, weight: .bold))
+                        .foregroundStyle(Theme.neonCyan)
+                        .neonGlow(Theme.neonCyan)
+                }
+                ToolbarItem(placement: .cancellationAction) {
+                    Button { dismiss() } label: {
+                        Text("✕")
+                            .font(Theme.mono(20, weight: .bold))
+                            .foregroundStyle(Theme.textSecondary)
                     }
                 }
+            }
+            .preferredColorScheme(.dark)
         }
     }
+
+    private var canJoin: Bool {
+        !code.trimmingCharacters(in: .whitespaces).isEmpty && !isLoading
+    }
+
+    private func join() async {
+        isLoading = true
+        errorMessage = nil
+        do {
+            _ = try await appState.joinNexus(code: code.trimmingCharacters(in: .whitespaces).uppercased())
+            dismiss()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+        isLoading = false
+    }
 }
 
-// MARK: - UIViewRepresentable camera preview
+// MARK: - NexusSettingsView
 
-struct QRScannerView: UIViewRepresentable {
+struct NexusSettingsView: View {
 
-    let onScan: (String) -> Void
+    let nexus: Nexus
 
-    func makeUIView(context: Context) -> QRScannerUIView {
-        let view = QRScannerUIView()
-        view.onScan = onScan
-        return view
+    @EnvironmentObject private var appState: AppState
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var inviteCode: String? = nil
+    @State private var isGeneratingCode = false
+    @State private var showCopiedToast = false
+    @State private var errorMessage: String? = nil
+
+    private var currentNexus: Nexus {
+        appState.nexuses.first(where: { $0.id == nexus.id }) ?? nexus
     }
 
-    func updateUIView(_ uiView: QRScannerUIView, context: Context) {}
-}
-
-final class QRScannerUIView: UIView, AVCaptureMetadataOutputObjectsDelegate {
-
-    var onScan: ((String) -> Void)?
-
-    private var captureSession: AVCaptureSession?
-    private var previewLayer: AVCaptureVideoPreviewLayer?
-
-    override func didMoveToSuperview() {
-        super.didMoveToSuperview()
-        setupSession()
+    private var isAdmin: Bool {
+        currentNexus.role == "admin"
     }
 
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        previewLayer?.frame = bounds
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Theme.background.ignoresSafeArea()
+
+                ScrollView {
+                    VStack(spacing: 0) {
+                        // Members section
+                        sectionHeader("> MEMBERS (\(currentNexus.members.count))")
+
+                        VStack(spacing: 0) {
+                            ForEach(currentNexus.members, id: \.identityKey) { member in
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(member.username ?? String(member.identityKey.prefix(12)) + "…")
+                                            .font(Theme.mono(13, weight: .medium))
+                                            .foregroundStyle(Theme.textPrimary)
+                                        Text(member.role.uppercased())
+                                            .font(Theme.mono(9))
+                                            .foregroundStyle(member.role == "admin" ? Theme.neonYellow : Theme.textDim)
+                                    }
+                                    Spacer()
+                                    if isAdmin && member.identityKey != appState.keyManager.identityKeyString {
+                                        Button {
+                                            Task {
+                                                try? await appState.kickMember(nexusId: nexus.id, identityKey: member.identityKey)
+                                            }
+                                        } label: {
+                                            Text("KICK")
+                                                .font(Theme.mono(10, weight: .bold))
+                                                .foregroundStyle(Theme.neonMagenta)
+                                                .padding(.horizontal, 8)
+                                                .padding(.vertical, 4)
+                                                .overlay(
+                                                    RoundedRectangle(cornerRadius: 2)
+                                                        .stroke(Theme.neonMagenta.opacity(0.6), lineWidth: 1)
+                                                )
+                                        }
+                                    }
+                                }
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 10)
+                                Divider().background(Theme.border)
+                            }
+                        }
+                        .background(Theme.surface)
+                        .overlay(Rectangle().strokeBorder(Theme.border, lineWidth: 1))
+                        .padding(.horizontal)
+                        .padding(.bottom, 24)
+
+                        // Invite section
+                        sectionHeader("> INVITE CODE")
+
+                        VStack(spacing: 12) {
+                            if let code = inviteCode {
+                                Text(code)
+                                    .font(Theme.mono(24, weight: .bold))
+                                    .foregroundStyle(Theme.neonCyan)
+                                    .neonGlow(Theme.neonCyan, radius: 8)
+                                    .textSelection(.enabled)
+
+                                Button {
+                                    UIPasteboard.general.string = code
+                                    showCopiedToast = true
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) { showCopiedToast = false }
+                                } label: {
+                                    Text(showCopiedToast ? "> COPIED" : "> COPY CODE")
+                                        .font(Theme.mono(11, weight: .bold))
+                                        .foregroundStyle(Theme.neonCyan)
+                                        .neonGlow(Theme.neonCyan, radius: 4)
+                                }
+                            }
+
+                            Button {
+                                Task { await generateInvite() }
+                            } label: {
+                                Text(isGeneratingCode ? "GENERATING…" : "[ GENERATE NEW CODE ]")
+                                    .font(Theme.mono(12, weight: .bold))
+                                    .tracking(1)
+                                    .foregroundStyle(Theme.background)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 10)
+                                    .background(Theme.neonCyan)
+                            }
+                            .neonGlow(Theme.neonCyan, radius: 6)
+                            .disabled(isGeneratingCode)
+                        }
+                        .padding(16)
+                        .background(Theme.surface)
+                        .overlay(Rectangle().strokeBorder(Theme.border, lineWidth: 1))
+                        .padding(.horizontal)
+                        .padding(.bottom, 24)
+
+                        // Actions section
+                        sectionHeader("> ACTIONS")
+
+                        VStack(spacing: 0) {
+                            if isAdmin {
+                                Button {
+                                    Task {
+                                        try? await appState.deleteNexus(id: nexus.id)
+                                        dismiss()
+                                    }
+                                } label: {
+                                    HStack {
+                                        Text("DELETE NEXUS")
+                                            .font(Theme.mono(12, weight: .bold))
+                                        Spacer()
+                                        Image(systemName: "trash")
+                                    }
+                                    .foregroundStyle(Theme.neonMagenta)
+                                    .padding(.horizontal, 16)
+                                    .padding(.vertical, 12)
+                                }
+                            }
+
+                            Button {
+                                Task {
+                                    try? await appState.leaveNexus(id: nexus.id)
+                                    dismiss()
+                                }
+                            } label: {
+                                HStack {
+                                    Text("LEAVE NEXUS")
+                                        .font(Theme.mono(12, weight: .bold))
+                                    Spacer()
+                                    Image(systemName: "arrow.right.square")
+                                }
+                                .foregroundStyle(Theme.neonMagenta)
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 12)
+                            }
+                        }
+                        .background(Theme.surface)
+                        .overlay(Rectangle().strokeBorder(Theme.neonMagenta.opacity(0.4), lineWidth: 1))
+                        .padding(.horizontal)
+
+                        if let err = errorMessage {
+                            Text(err)
+                                .font(Theme.mono(10))
+                                .foregroundStyle(Theme.neonMagenta)
+                                .padding()
+                        }
+                    }
+                    .padding(.top, 8)
+                }
+            }
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(Theme.surface, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
+            .toolbarColorScheme(.dark, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Text("// \(currentNexus.name.uppercased())")
+                        .font(Theme.mono(16, weight: .bold))
+                        .foregroundStyle(Theme.neonGreen)
+                        .neonGlow()
+                }
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button { dismiss() } label: {
+                        Text("✕")
+                            .font(Theme.mono(20, weight: .bold))
+                            .foregroundStyle(Theme.textSecondary)
+                    }
+                }
+            }
+            .preferredColorScheme(.dark)
+            .animation(.easeInOut, value: showCopiedToast)
+            .onAppear {
+                Task { await appState.refreshNexusMembers(nexusId: nexus.id) }
+            }
+        }
     }
 
-    private func setupSession() {
-        let session = AVCaptureSession()
-        guard let device = AVCaptureDevice.default(for: .video),
-              let input = try? AVCaptureDeviceInput(device: device),
-              session.canAddInput(input) else { return }
-
-        session.addInput(input)
-
-        let output = AVCaptureMetadataOutput()
-        guard session.canAddOutput(output) else { return }
-        session.addOutput(output)
-        output.setMetadataObjectsDelegate(self, queue: .main)
-        output.metadataObjectTypes = [.qr]
-
-        let preview = AVCaptureVideoPreviewLayer(session: session)
-        preview.videoGravity = .resizeAspectFill
-        preview.frame = bounds
-        layer.addSublayer(preview)
-        previewLayer = preview
-
-        captureSession = session
-        DispatchQueue.global(qos: .userInitiated).async { session.startRunning() }
+    private func sectionHeader(_ title: String) -> some View {
+        HStack {
+            Text(title)
+                .font(Theme.mono(11, weight: .bold))
+                .foregroundStyle(Theme.neonGreen)
+                .neonGlow(Theme.neonGreen, radius: 4)
+                .tracking(2)
+            Spacer()
+        }
+        .padding(.horizontal, 20)
+        .padding(.bottom, 6)
     }
 
-    func metadataOutput(_ output: AVCaptureMetadataOutput,
-                        didOutput metadataObjects: [AVMetadataObject],
-                        from connection: AVCaptureConnection) {
-        guard let obj = metadataObjects.first as? AVMetadataMachineReadableCodeObject,
-              let value = obj.stringValue else { return }
-        captureSession?.stopRunning()
-        onScan?(value)
+    private func generateInvite() async {
+        isGeneratingCode = true
+        errorMessage = nil
+        do {
+            let resp = try await appState.createInvite(nexusId: nexus.id)
+            inviteCode = resp.code
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+        isGeneratingCode = false
     }
 }
