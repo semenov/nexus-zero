@@ -270,6 +270,9 @@ final class AppState: ObservableObject {
         let senderKey = response.senderKey
         let nexusId = response.nexusId
 
+        // Skip WS echo of our own messages — already added optimistically on send.
+        if senderKey == keyManager.identityKeyString { return }
+
         // Decrypt the message (it's encrypted for us).
         let text: String
         do {
@@ -279,8 +282,6 @@ final class AppState: ObservableObject {
             return
         }
 
-        let isOutgoing = senderKey == keyManager.identityKeyString
-
         let stored = StoredMessage(
             id: response.id,
             nexusId: nexusId,
@@ -288,11 +289,11 @@ final class AppState: ObservableObject {
             senderUsername: response.senderUsername,
             text: text,
             createdAt: response.createdAt,
-            isOutgoing: isOutgoing
+            isOutgoing: false
         )
         appendToConversation(stored, nexusId: nexusId)
 
-        if !isOutgoing && activeNexusId != nexusId {
+        if activeNexusId != nexusId {
             let senderName = response.senderUsername ?? String(senderKey.prefix(8)) + "…"
             let nexusName = nexuses.first(where: { $0.id == nexusId })?.name ?? "Unknown"
             scheduleLocalNotification(from: senderName, nexus: nexusName, text: text, id: response.id, nexusId: nexusId)

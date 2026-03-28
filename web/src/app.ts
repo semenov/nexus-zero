@@ -499,6 +499,9 @@ function handleIncoming(frame: ServerMessage & { sender_username?: string }): vo
   const nexusId = frame.nexus_id
   const isOutgoing = frame.sender_key === S.myIdentKey
 
+  // Skip WS echo of our own messages — already added optimistically on send.
+  if (isOutgoing) return
+
   let text: string
   try {
     text = crypto.decrypt(S.agreementPriv, frame.ephemeral_key, frame.ciphertext)
@@ -514,10 +517,10 @@ function handleIncoming(frame: ServerMessage & { sender_username?: string }): vo
     senderUsername: frame.sender_username,
     text,
     createdAt: frame.created_at,
-    isOutgoing,
+    isOutgoing: false,
   })
 
-  if (!isOutgoing && S.activeNexusId !== nexusId) {
+  if (S.activeNexusId !== nexusId) {
     showNotification(nexusId, frame.sender_username ?? frame.sender_key.slice(0, 8), text)
   }
 }

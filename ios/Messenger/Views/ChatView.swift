@@ -2,7 +2,7 @@ import SwiftUI
 
 struct ChatView: View {
 
-    let nexus: Nexus
+    let nexusId: String
 
     @EnvironmentObject private var appState: AppState
     @State private var inputText: String = ""
@@ -10,8 +10,12 @@ struct ChatView: View {
     @State private var errorMessage: String? = nil
     @State private var showNexusSettings = false
 
+    private var nexus: Nexus {
+        appState.nexuses.first(where: { $0.id == nexusId }) ?? Nexus(id: nexusId, name: "?", creatorKey: "", role: "", members: [])
+    }
+
     private var messages: [StoredMessage] {
-        appState.conversations[nexus.id] ?? []
+        appState.conversations[nexusId] ?? []
     }
 
     var body: some View {
@@ -55,7 +59,10 @@ struct ChatView: View {
             NexusSettingsView(nexus: nexus)
         }
         .preferredColorScheme(.dark)
-        .onAppear  { appState.activeNexusId = nexus.id }
+        .onAppear  {
+            appState.activeNexusId = nexus.id
+            Task { await appState.refreshNexusMembers(nexusId: nexus.id) }
+        }
         .onDisappear { appState.activeNexusId = nil }
     }
 

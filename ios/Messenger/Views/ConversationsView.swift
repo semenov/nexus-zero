@@ -68,13 +68,13 @@ struct ConversationsView: View {
             }
             .onChange(of: appState.pendingOpenNexusId) { nexusId in
                 guard let nexusId,
-                      let nexus = appState.nexuses.first(where: { $0.id == nexusId }) else { return }
+                      appState.nexuses.contains(where: { $0.id == nexusId }) else { return }
                 navPath.removeLast(navPath.count)
-                navPath.append(nexus)
+                navPath.append(nexusId)
                 appState.pendingOpenNexusId = nil
             }
-            .navigationDestination(for: Nexus.self) { nexus in
-                ChatView(nexus: nexus)
+            .navigationDestination(for: String.self) { nexusId in
+                ChatView(nexusId: nexusId)
             }
         }
         .preferredColorScheme(.dark)
@@ -101,7 +101,7 @@ struct ConversationsView: View {
         ScrollView {
             LazyVStack(spacing: 1) {
                 ForEach(appState.nexuses) { nexus in
-                    NavigationLink(value: nexus) {
+                    NavigationLink(value: nexus.id) {
                         NexusRow(nexus: nexus,
                                  lastMessage: appState.conversations[nexus.id]?.last)
                     }
