@@ -106,21 +106,6 @@ func (s *Store) GetUser(ctx context.Context, identityKey string) (*User, error) 
 	return u, nil
 }
 
-func (s *Store) GetUserByUsername(ctx context.Context, username string) (*User, error) {
-	row := s.pool.QueryRow(ctx,
-		`SELECT identity_key, encryption_key, username, created_at FROM users WHERE username = $1`,
-		username,
-	)
-	u := &User{}
-	err := row.Scan(&u.IdentityKey, &u.EncryptionKey, &u.Username, &u.CreatedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	return u, nil
-}
 
 func (s *Store) SetUsername(ctx context.Context, identityKey, username string) error {
 	ct, err := s.pool.Exec(ctx,
@@ -128,9 +113,6 @@ func (s *Store) SetUsername(ctx context.Context, identityKey, username string) e
 		identityKey, username,
 	)
 	if err != nil {
-		if isUniqueViolation(err) {
-			return errors.New("username_taken")
-		}
 		return err
 	}
 	if ct.RowsAffected() == 0 {

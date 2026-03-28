@@ -114,12 +114,9 @@ func (s *Server) HandleSetUsername(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.store.SetUsername(r.Context(), identityKey, req.Username); err != nil {
-		switch err.Error() {
-		case "username_taken":
-			writeError(w, http.StatusConflict, "username already taken")
-		case "not_found":
+		if err.Error() == "not_found" {
 			writeError(w, http.StatusNotFound, "user not found")
-		default:
+		} else {
 			log.Printf("HandleSetUsername error: %v", err)
 			writeError(w, http.StatusInternalServerError, "internal server error")
 		}

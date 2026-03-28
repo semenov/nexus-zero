@@ -44,8 +44,7 @@ struct ConversationsView: View {
                     Button {
                         showJoinNexus = true
                     } label: {
-                        Text("J")
-                            .font(Theme.mono(14, weight: .bold))
+                        Image(systemName: "key.fill")
                             .foregroundStyle(Theme.neonCyan)
                             .neonGlow(Theme.neonCyan)
                     }

@@ -4,7 +4,7 @@ CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 CREATE TABLE IF NOT EXISTS users (
     identity_key   TEXT PRIMARY KEY,
     encryption_key TEXT NOT NULL,
-    username       TEXT UNIQUE,
+    username       TEXT,
     created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
