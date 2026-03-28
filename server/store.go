@@ -446,34 +446,33 @@ func (s *Store) ValidateAndUseInviteCode(ctx context.Context, code, identityKey 
 // ── Messages ─────────────────────────────────────────────────────────────────
 
 // SaveNexusMessages batch-inserts one message row per recipient envelope.
-// All rows share the same message ID (logical message) and timestamp.
-func (s *Store) SaveNexusMessages(ctx context.Context, nexusID, senderKey string, envelopes []MessageEnvelope) (string, time.Time, error) {
+// Each row gets its own UUID. Returns the list of IDs (one per envelope) and shared timestamp.
+func (s *Store) SaveNexusMessages(ctx context.Context, nexusID, senderKey string, envelopes []MessageEnvelope) ([]string, time.Time, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return "", time.Time{}, err
+		return nil, time.Time{}, err
 	}
 	defer tx.Rollback(ctx)
 
-	// Generate a shared message ID and timestamp.
-	var msgID string
 	var createdAt time.Time
-	err = tx.QueryRow(ctx, `SELECT gen_random_uuid(), NOW()`).Scan(&msgID, &createdAt)
+	err = tx.QueryRow(ctx, `SELECT NOW()`).Scan(&createdAt)
 	if err != nil {
-		return "", time.Time{}, err
+		return nil, time.Time{}, err
 	}
 
-	for _, env := range envelopes {
-		_, err = tx.Exec(ctx,
-			`INSERT INTO messages (id, nexus_id, sender_key, recipient_key, ephemeral_key, ciphertext, created_at)
-			 VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7)`,
-			msgID, nexusID, senderKey, env.RecipientKey, env.EphemeralKey, env.Ciphertext, createdAt,
-		)
+	ids := make([]string, len(envelopes))
+	for i, env := range envelopes {
+		err = tx.QueryRow(ctx,
+			`INSERT INTO messages (nexus_id, sender_key, recipient_key, ephemeral_key, ciphertext, created_at)
+			 VALUES ($1::uuid, $2, $3, $4, $5, $6) RETURNING id`,
+			nexusID, senderKey, env.RecipientKey, env.EphemeralKey, env.Ciphertext, createdAt,
+		).Scan(&ids[i])
 		if err != nil {
-			return "", time.Time{}, err
+			return nil, time.Time{}, err
 		}
 	}
 
-	return msgID, createdAt, tx.Commit(ctx)
+	return ids, createdAt, tx.Commit(ctx)
 }
 
 func (s *Store) GetNexusHistory(ctx context.Context, nexusID, recipientKey string, limit int, since *time.Time, beforeID *string) ([]*Message, error) {

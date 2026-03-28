@@ -525,7 +525,7 @@ func (s *Server) HandleSendNexusMessage(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	msgID, createdAt, err := s.store.SaveNexusMessages(r.Context(), nexusID, senderKey, req.Envelopes)
+	ids, createdAt, err := s.store.SaveNexusMessages(r.Context(), nexusID, senderKey, req.Envelopes)
 	if err != nil {
 		log.Printf("HandleSendNexusMessage SaveNexusMessages error: %v", err)
 		writeError(w, http.StatusInternalServerError, "internal server error")
@@ -540,10 +540,10 @@ func (s *Server) HandleSendNexusMessage(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Deliver to each recipient via WebSocket + push.
-	for _, env := range req.Envelopes {
+	for i, env := range req.Envelopes {
 		wsEnv := wsMessageEnvelope{
 			Type:           "message",
-			ID:             msgID,
+			ID:             ids[i],
 			NexusID:        nexusID,
 			SenderKey:      senderKey,
 			SenderUsername: senderUsername,
@@ -561,7 +561,7 @@ func (s *Server) HandleSendNexusMessage(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	writeJSON(w, http.StatusCreated, sendNexusMessageResponse{ID: msgID, CreatedAt: createdAt})
+	writeJSON(w, http.StatusCreated, sendNexusMessageResponse{ID: ids[0], CreatedAt: createdAt})
 }
 
 // ── GET /v1/nexuses/{id}/messages ────────────────────────────────────────────
